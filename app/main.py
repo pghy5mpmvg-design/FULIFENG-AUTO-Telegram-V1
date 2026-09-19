@@ -81,6 +81,8 @@ def create_app(settings=None):
         if not x: return HTMLResponse('客户不存在', status_code=404)
         def ev(v): return escape(v or '', quote=True)
         follow = x.next_follow_up.astimezone(ZoneInfo(settings.timezone)).strftime('%Y-%m-%dT%H:%M') if x.next_follow_up else ''
+        suggestions = getattr(app.state, 'lead_suggestions', {}).get(lead_id, [])
+        suggestions_html = ''.join(f'<form method="post" action="/crm/{lead_id}/send-suggestion"><textarea name="text" rows="3">{escape(t)}</textarea><button type="submit">确认并发送给客户</button></form>' for t in suggestions)
         return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>CRM {lead_id}</title>
         <style>body{{font-family:Arial;max-width:850px;margin:30px auto;padding:0 16px}}input,select,textarea{{width:100%;padding:10px;margin:6px 0;box-sizing:border-box}}button{{padding:12px 20px}}</style></head><body>
         <p><a href="/crm">← CRM</a></p><h1>{ev(x.first_name)} @{ev(x.username)}</h1><p>Telegram ID: {x.telegram_user_id}　咨询车辆: {ev(x.vehicle_code) or "-"}</p>
@@ -90,7 +92,31 @@ def create_app(settings=None):
         <input name="budget" value="{ev(x.budget)}" placeholder="预算"><input name="city" value="{ev(x.city)}" placeholder="城市 / 国家">
         <select name="vehicle_preference"><option value="{ev(x.vehicle_preference)}">{ev(x.vehicle_preference) or "新车/二手偏好"}</option><option value="new">新车</option><option value="used">二手车</option><option value="either">均可</option></select>
         <input name="purchase_timing" value="{ev(x.purchase_timing)}" placeholder="预计购买时间"><label>下次跟进</label><input type="datetime-local" name="next_follow_up" value="{follow}">
-        <textarea name="manager_note" rows="6" placeholder="销售备注">{ev(x.manager_note)}</textarea><button type="submit">保存客户资料</button></form></body></html>"""
+        <textarea name="manager_note" rows="6" placeholder="销售备注">{ev(x.manager_note)}</textarea><button type="submit">保存客户资料</button></form><h2>AI俄语跟进助手</h2><form method="post" action="/crm/{lead_id}/suggest"><button type="submit">生成3条俄语跟进建议</button></form>{suggestions_html}</body></html>"""
+
+    @app.post('/crm/{lead_id}/suggest')
+    async def crm_suggest(lead_id: int, _=Depends(garage_auth)):
+        lead = app.state.db.lead(lead_id)
+        if not lead: return HTMLResponse('客户不存在', status_code=404)
+        vehicle = app.state.db.vehicle(lead.vehicle_code) if lead.vehicle_code else None
+        suggestions = await app.state.service.content.lead_followup_suggestions(lead, vehicle.facts if vehicle else '')
+        if not hasattr(app.state, 'lead_suggestions'): app.state.lead_suggestions = {}
+        app.state.lead_suggestions[lead_id] = suggestions
+        return RedirectResponse('/crm/' + str(lead_id), status_code=303)
+
+    @app.post('/crm/{lead_id}/send-suggestion')
+    async def crm_send_suggestion(lead_id: int, text: str = Form(...), _=Depends(garage_auth)):
+        lead = app.state.db.lead(lead_id)
+        if not lead: return HTMLResponse('客户不存在', status_code=404)
+        clean = (text or '').strip()
+        if not clean or len(clean) > 1500: return HTMLResponse('消息长度无效', status_code=400)
+        try:
+            await app.state.service.application.bot.send_message(chat_id=lead.telegram_user_id, text=clean)
+            app.state.db.update_lead(lead_id, status='contacted')
+        except Exception as exc:
+            logging.getLogger(__name__).exception('CRM approved send failed: %s', type(exc).__name__)
+            return HTMLResponse('发送失败：' + escape(type(exc).__name__), status_code=502)
+        return RedirectResponse('/crm/' + str(lead_id), status_code=303)
 
     @app.post('/crm/{lead_id}')
     def crm_update(lead_id: int, grade: str = Form('C'), status: str = Form('new'), budget: str = Form(''),
