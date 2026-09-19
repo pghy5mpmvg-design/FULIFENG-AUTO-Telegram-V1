@@ -48,6 +48,7 @@ class Vehicle(Base):
     facts: Mapped[str] = mapped_column(Text)
     caption: Mapped[str] = mapped_column(Text, default='')
     photo_file_id: Mapped[str] = mapped_column(Text, default='')
+    photo_file_ids: Mapped[str] = mapped_column(Text, default='')
     status: Mapped[str] = mapped_column(String(20), default='available')
     telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     publish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -119,7 +120,7 @@ class Database:
         with self.session() as s:
             return s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
 
-    def update_vehicle(self, code, facts=None, caption=None, photo_file_id=None, publish_at=None, repeat_rule=None, auto_publish=None):
+    def update_vehicle(self, code, facts=None, caption=None, photo_file_id=None, photo_file_ids=None, publish_at=None, repeat_rule=None, auto_publish=None):
         with self.session.begin() as s:
             row = s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
             if not row:
@@ -127,6 +128,7 @@ class Database:
             if facts is not None: row.facts = facts[:4000]
             if caption is not None: row.caption = caption[:4000]
             if photo_file_id is not None: row.photo_file_id = photo_file_id
+            if photo_file_ids is not None: row.photo_file_ids = photo_file_ids
             if publish_at is not None: row.publish_at = publish_at
             if repeat_rule is not None: row.repeat_rule = repeat_rule
             if auto_publish is not None: row.auto_publish = auto_publish
