@@ -213,11 +213,16 @@ class BotService:
             if not target:
                 await msg.reply_text('Сначала задайте канал: /setchat @channel')
                 return
+            await msg.reply_text('Фото и данные получены. Готовлю публикацию…')
             caption = await self.content.sales_listing(facts)
             photo_id = msg.reply_to_message.photo[-1].file_id
-            sent = await context.bot.send_photo(chat_id=target, photo=photo_id, caption=caption[:1024])
-            await msg.reply_text(f'Опубликовано фото + объявление. message_id={sent.message_id}')
-            log.info('Vehicle photo post sent: chat_id=%s; message_id=%s', target, sent.message_id)
+            try:
+                sent = await context.bot.send_photo(chat_id=target, photo=photo_id, caption=caption[:1024])
+                await msg.reply_text(f'Опубликовано фото + объявление. message_id={sent.message_id}')
+                log.info('Vehicle photo post sent: chat_id=%s; message_id=%s', target, sent.message_id)
+            except Exception as exc:
+                log.exception('Vehicle photo post failed')
+                await msg.reply_text('Не удалось опубликовать в канал. Проверьте /setchat и права бота в канале. Ошибка: ' + type(exc).__name__)
         elif name == 'stats':
             stats = self.db.stats()
             await msg.reply_text('Лиды: ' + ', '.join(f'{k}: {v}' for k, v in stats['leads'].items()) +
