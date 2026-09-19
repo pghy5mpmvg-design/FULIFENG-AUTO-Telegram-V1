@@ -101,6 +101,12 @@ class Lead(Base):
     grade: Mapped[str] = mapped_column(String(10), default='C')
     last_message: Mapped[str] = mapped_column(Text, default='')
     status: Mapped[str] = mapped_column(String(30), default='new')
+    budget: Mapped[str] = mapped_column(String(100), default='')
+    city: Mapped[str] = mapped_column(String(150), default='')
+    vehicle_preference: Mapped[str] = mapped_column(String(30), default='')
+    purchase_timing: Mapped[str] = mapped_column(String(100), default='')
+    manager_note: Mapped[str] = mapped_column(Text, default='')
+    next_follow_up: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
@@ -300,6 +306,30 @@ class Database:
             row.grade = 'A' if vehicle_code and hot else ('B' if hot or vehicle_code else 'C')
             row.updated_at = now()
             return row.grade
+
+    def lead(self, lead_id):
+        with self.session() as s:
+            return s.get(Lead, int(lead_id))
+
+    def update_lead(self, lead_id, grade=None, status=None, budget=None, city=None, vehicle_preference=None,
+                    purchase_timing=None, manager_note=None, next_follow_up=None):
+        with self.session.begin() as s:
+            row = s.get(Lead, int(lead_id))
+            if not row: return False
+            if grade in ('A+','A','B','C'): row.grade = grade
+            if status in ('new','contacted','negotiating','won','lost'): row.status = status
+            for k,v in [('budget',budget),('city',city),('vehicle_preference',vehicle_preference),
+                        ('purchase_timing',purchase_timing),('manager_note',manager_note)]:
+                if v is not None: setattr(row,k,(v or '')[:4000] if k=='manager_note' else (v or '')[:200])
+            if next_follow_up is not None: row.next_follow_up = next_follow_up
+            row.updated_at = now()
+            return True
+
+    def due_followups(self, at=None, limit=50):
+        at = at or now()
+        with self.session() as s:
+            return s.scalars(select(Lead).where(Lead.next_follow_up.is_not(None), Lead.next_follow_up <= at,
+                Lead.status.not_in(('won','lost')), Lead.grade.in_(('A+','A','B','C'))).order_by(Lead.next_follow_up).limit(limit)).all()
 
     def leads(self, limit=100):
         with self.session() as s:
