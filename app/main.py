@@ -160,7 +160,8 @@ def create_app(settings=None):
         x = app.state.db.vehicle(code)
         if not x:
             return HTMLResponse('车辆不存在', status_code=404)
-        caption = await app.state.service.content.sales_listing(x.facts)
+        detail = app.state.db.vehicle_detail(code)
+        caption = await app.state.service.content.structured_vehicle_listing(detail, x.facts)
         app.state.db.update_vehicle(code, caption=caption)
         return RedirectResponse('/garage/' + code, status_code=303)
 
