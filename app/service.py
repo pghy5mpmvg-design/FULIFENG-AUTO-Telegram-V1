@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -308,8 +309,24 @@ class BotService:
             # D is recorded only: no reply, notification or proactive outreach.
             if grade == 'D':
                 return
+            match = re.search(r'\\bFF[- ]?(\\d{1,6})\\b', msg.text or '', re.I)
+            vehicle_code = ('FF-' + match.group(1).zfill(5)) if match else ''
+            crm_grade = self.db.upsert_lead(user.id, user.username or '', user.first_name or '',
+                                            user.language_code or '', vehicle_code, msg.text or '')
+            if crm_grade == 'A' and self.settings.admin_ids:
+                vehicle_note = (' | ' + vehicle_code) if vehicle_code else ''
+                alert = f'🔥 Новый лид {crm_grade}{vehicle_note}\\n@{user.username or "-"} | ID {user.id}\\n{(msg.text or "")[:700]}'
+                for admin_id in self.settings.admin_ids:
+                    try:
+                        await context.bot.send_message(chat_id=admin_id, text=alert)
+                    except Exception as exc:
+                        log.warning('Lead alert failed: %s', type(exc).__name__)
         stock = self.db.catalog('stock', self.settings.stock_text)
         prices = self.db.catalog('price', self.settings.price_text)
+        if not admin and vehicle_code:
+            vehicle = self.db.vehicle(vehicle_code)
+            if vehicle and vehicle.status == 'available':
+                stock = vehicle_code + ': ' + vehicle.facts + '\\n' + stock
         reply = await self.content.sales_reply(msg.text, stock, prices)
         sent = await context.bot.send_message(chat_id=update.effective_chat.id, text=reply)
         log.info('AI sales reply sent: chat_id=%s; admin=%s; message_id=%s', update.effective_chat.id, admin, sent.message_id)
