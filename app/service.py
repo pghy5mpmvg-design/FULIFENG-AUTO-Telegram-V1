@@ -45,6 +45,7 @@ class BotService:
     async def start(self):
         self.build()
         await self.application.initialize()
+        log.info('Connected Telegram bot: @%s; admin_count=%d', self.application.bot.username, len(self.settings.admin_ids))
         webhook = await self.application.bot.get_webhook_info()
         if webhook.url:
             raise RuntimeError('Existing webhook must be removed before enabling polling')
@@ -63,6 +64,8 @@ class BotService:
                 updates = await self.application.bot.get_updates(offset=offset, timeout=25, read_timeout=35,
                                                                   allowed_updates=['message'])
                 self.polling_ok, self.error_code = True, None
+                if updates:
+                    log.info('Telegram received %d update(s)', len(updates))
                 for update in updates:
                     await self.application.process_update(update)
                     offset = update.update_id + 1
@@ -135,8 +138,10 @@ class BotService:
         name = msg.text.split()[0].split('@')[0][1:].lower()
         args = context.args or []
         admin = user.id in self.settings.admin_ids
+        log.info('Command received: /%s; admin=%s; chat_type=%s', name, admin, update.effective_chat.type)
         if name in ADMIN_COMMANDS and (not admin or update.effective_chat.type != 'private'):
             await msg.reply_text('Команда доступна администратору в личном чате.')
+            log.info('Command denied: /%s', name)
             return
         with self.db.session.begin() as s:
             s.add(CommandEvent(command=name))
@@ -199,6 +204,7 @@ class BotService:
             stats = self.db.stats()
             await msg.reply_text('Лиды: ' + ', '.join(f'{k}: {v}' for k, v in stats['leads'].items()) +
                                  f'\nПубликаций: {stats["sent"]}\nТребуют проверки: {stats["uncertain"]}\nD: только запись, без исходящих сообщений.')
+        log.info('Command completed: /%s', name)
 
     async def message(self, update, context):
         user, msg = update.effective_user, update.effective_message
@@ -209,4 +215,3 @@ class BotService:
         # D is recorded only: no reply, notification or proactive outreach.
         if grade != 'D':
             await msg.reply_text('Спасибо! Запрос сохранён. Для уточнения укажите модель, бюджет и город доставки.')
-
