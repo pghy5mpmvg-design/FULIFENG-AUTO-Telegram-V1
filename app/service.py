@@ -122,6 +122,7 @@ class BotService:
                 self.db.advance_vehicle_schedule(vehicle.code)
                 log.info('Scheduled vehicle published: code=%s; chat_id=%s; message_id=%s', vehicle.code, target, sent.message_id)
             except Exception as exc:
+                self.db.record_vehicle_publication(vehicle.code, target, None, vehicle.caption or vehicle.facts, mode='scheduled', status='failed:' + type(exc).__name__)
                 log.exception('Scheduled vehicle publish failed: code=%s; error=%s', vehicle.code, type(exc).__name__)
 
     async def scheduled(self, hour):
