@@ -374,6 +374,36 @@ class Database:
             row.updated_at = now()
             return row.grade
 
+    def match_vehicles_for_lead(self, lead_id, limit=5):
+        lead = self.lead(lead_id)
+        if not lead: return []
+        with self.session() as s:
+            vehicles = s.scalars(select(Vehicle).where(Vehicle.status == 'available').order_by(Vehicle.updated_at.desc())).all()
+            details = {d.vehicle_code: d for d in s.scalars(select(VehicleDetail)).all()}
+        pref = (lead.vehicle_preference or '').lower()
+        budget_text = (lead.budget or '').lower()
+        city_text = (lead.city or '').lower()
+        scored = []
+        for v in vehicles:
+            d = details.get(v.code)
+            hay = ' '.join(filter(None, [v.facts, getattr(d,'brand',''), getattr(d,'model',''),
+                                         getattr(d,'highlights',''), getattr(d,'condition','')])).lower()
+            score, reasons = 0, []
+            if lead.vehicle_code and v.code == lead.vehicle_code:
+                score += 10; reasons.append('客户指定车辆')
+            if pref and d and d.condition and pref in (d.condition or '').lower():
+                score += 3; reasons.append('新车/二手偏好匹配')
+            tokens = [t for t in (lead.last_message or '').lower().replace(',', ' ').split() if len(t) >= 3]
+            hits = sum(1 for t in set(tokens) if t in hay)
+            if hits:
+                score += min(hits, 4); reasons.append('车型/需求关键词匹配')
+            if budget_text and d and d.sale_price and any(x in str(d.sale_price).lower() for x in budget_text.split()):
+                score += 1; reasons.append('价格信息可供核对')
+            if score or not lead.vehicle_code:
+                scored.append((score, v, d, reasons))
+        scored.sort(key=lambda x: (x[0], x[1].updated_at), reverse=True)
+        return scored[:limit]
+
     def intervention_leads(self, limit=30):
         with self.session() as s:
             return s.scalars(select(Lead).where(
