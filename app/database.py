@@ -355,6 +355,31 @@ class Database:
             row.updated_at = now()
             return True
 
+    def recalculate_lead_grade(self, lead_id):
+        with self.session.begin() as s:
+            row = s.get(Lead, int(lead_id))
+            if not row: return None
+            score = 0
+            if row.vehicle_code: score += 2
+            if row.budget: score += 2
+            if row.city: score += 1
+            if row.purchase_timing: score += 2
+            if row.vehicle_preference: score += 1
+            text = (row.last_message or '').lower()
+            if any(k in text for k in ['оплата','готов купить','оформить','счет','счёт','договор','payment','invoice','付款','合同']): score += 3
+            elif any(k in text for k in ['цена','стоимость','доставка','price','delivery','价格','运输']): score += 2
+            if row.status == 'negotiating': score += 2
+            if row.status == 'won': score += 4
+            row.grade = 'A+' if score >= 8 else ('A' if score >= 5 else ('B' if score >= 2 else 'C'))
+            row.updated_at = now()
+            return row.grade
+
+    def intervention_leads(self, limit=30):
+        with self.session() as s:
+            return s.scalars(select(Lead).where(
+                Lead.grade.in_(('A+','A')), Lead.status.not_in(('won','lost'))
+            ).order_by(Lead.grade.asc(), Lead.updated_at.desc()).limit(limit)).all()
+
     def due_followups(self, at=None, limit=50):
         at = at or now()
         with self.session() as s:
