@@ -68,11 +68,12 @@ def create_app(settings=None):
     @app.get('/crm', response_class=HTMLResponse)
     def crm(_=Depends(garage_auth)):
         rows = app.state.db.leads()
+        due = app.state.db.due_followups()
+        due_html = ''.join(f'<tr><td><a href="/crm/{x.id}">{escape(x.first_name or x.username or str(x.telegram_user_id))}</a></td><td>{x.grade}</td><td>{escape(x.vehicle_code or "-")}</td><td>{x.next_follow_up.astimezone(ZoneInfo(settings.timezone)).strftime("%Y-%m-%d %H:%M") if x.next_follow_up else "-"}</td></tr>' for x in due)
         body = ''.join(f'<tr><td>{x.grade}</td><td><a href="/crm/{x.id}">{escape(x.first_name or "-")}</a></td><td>@{escape(x.username or "-")}</td><td>{escape(x.vehicle_code or "-")}</td><td>{escape(x.last_message[:160])}</td><td>{x.updated_at:%Y-%m-%d %H:%M}</td></tr>' for x in rows)
         return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>FULIFENG CRM</title>
         <style>body{{font-family:Arial;max-width:1150px;margin:30px auto;padding:0 16px}}table{{width:100%;border-collapse:collapse}}td,th{{padding:9px;border-bottom:1px solid #ddd;text-align:left}}</style></head>
-        <body><h1>FULIFENG AUTO 客户线索 CRM</h1><p><a href="/garage-dashboard">← 运营控制台</a></p>
-        <table><tr><th>等级</th><th>客户</th><th>Telegram</th><th>咨询车辆</th><th>最近消息</th><th>更新时间</th></tr>{body}</table></body></html>"""
+        <body><h1>FULIFENG AUTO 客户线索 CRM</h1><p><a href="/garage-dashboard">← 运营控制台</a></p><h2>今天 / 已到期必须跟进</h2><table><tr><th>客户</th><th>等级</th><th>车辆</th><th>跟进时间</th></tr>{due_html or "<tr><td colspan=4>暂无到期跟进</td></tr>"}</table><h2>全部客户</h2><table><tr><th>等级</th><th>客户</th><th>Telegram</th><th>咨询车辆</th><th>最近消息</th><th>更新时间</th></tr>{body}</table></body></html>"""
 
     @app.get('/crm/{lead_id}', response_class=HTMLResponse)
     def crm_detail(lead_id: int, _=Depends(garage_auth)):
