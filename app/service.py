@@ -16,8 +16,8 @@ from .scoring import classify
 log = logging.getLogger(__name__)
 COMMANDS = {'start': 'Начать', 'help': 'Помощь', 'today': 'План на сегодня', 'stock': 'Наличие',
             'price': 'Стоимость', 'post': 'Публикация (админ)', 'setchat': 'Канал (админ)',
-            'pause': 'Пауза (админ)', 'resume': 'Продолжить (админ)', 'stats': 'Статистика (админ)', 'car': 'Авто с фото (админ)'}
-ADMIN_COMMANDS = {'today', 'post', 'setchat', 'pause', 'resume', 'stats', 'car'}
+            'pause': 'Пауза (админ)', 'resume': 'Продолжить (админ)', 'stats': 'Статистика (админ)', 'car': 'Авто с фото (админ)', 'edit': 'Изменить текст (админ)', 'publish': 'Опубликовать черновик (админ)'}
+ADMIN_COMMANDS = {'today', 'post', 'setchat', 'pause', 'resume', 'stats', 'car', 'edit', 'publish'}
 
 
 class BotService:
@@ -29,6 +29,7 @@ class BotService:
         self.lock = asyncio.Lock()
         self.polling_ok = False
         self.error_code = None
+        self.car_drafts = {}
 
     def build(self):
         self.application = Application.builder().token(self.settings.bot_token).updater(None).build()
@@ -205,26 +206,43 @@ class BotService:
             facts = ' '.join(args).strip()
             photo_source = msg.reply_to_message if msg.reply_to_message and msg.reply_to_message.photo else None
             if not photo_source:
-                await msg.reply_text('Фото не найдено. В Telegram нажмите на фото → Ответить, затем отправьте:\n/car Audi Q3 | 2022 | 40000 км | родная краска')
-                log.info('Vehicle command missing replied photo')
+                await msg.reply_text('Фото не найдено. Ответьте командой /car на сообщение с фото.')
                 return
             if not facts:
                 await msg.reply_text('После /car укажите модель, год, пробег и состояние.')
+                return
+            await msg.reply_text('Фото и данные получены. Готовлю текст…')
+            caption = await self.content.sales_listing(facts)
+            self.car_drafts[user.id] = {'photo_id': photo_source.photo[-1].file_id, 'caption': caption, 'facts': facts}
+            await msg.reply_text('ПРЕДПРОСМОТР:\n\n' + caption[:3500] + '\n\nИзменить: /edit новый текст\nОпубликовать: /publish')
+        elif name == 'edit':
+            draft = self.car_drafts.get(user.id)
+            text = ' '.join(args).strip()
+            if not draft:
+                await msg.reply_text('Сначала создайте черновик через /car.')
+                return
+            if not text:
+                await msg.reply_text('/edit новый текст объявления')
+                return
+            draft['caption'] = text[:1024]
+            await msg.reply_text('Текст обновлён:\n\n' + draft['caption'] + '\n\nДля публикации: /publish')
+        elif name == 'publish':
+            draft = self.car_drafts.get(user.id)
+            if not draft:
+                await msg.reply_text('Нет черновика. Сначала /car.')
                 return
             target = self.db.get('target_chat')
             if not target:
                 await msg.reply_text('Сначала задайте канал: /setchat @channel')
                 return
-            await msg.reply_text('Фото и данные получены. Готовлю публикацию…')
-            caption = await self.content.sales_listing(facts)
-            photo_id = photo_source.photo[-1].file_id
             try:
-                sent = await context.bot.send_photo(chat_id=target, photo=photo_id, caption=caption[:1024])
-                await msg.reply_text(f'Опубликовано фото + объявление. message_id={sent.message_id}')
-                log.info('Vehicle photo post sent: chat_id=%s; message_id=%s', target, sent.message_id)
+                sent = await context.bot.send_photo(chat_id=target, photo=draft['photo_id'], caption=draft['caption'][:1024])
+                self.car_drafts.pop(user.id, None)
+                await msg.reply_text(f'Опубликовано. message_id={sent.message_id}')
+                log.info('Vehicle draft published: chat_id=%s; message_id=%s', target, sent.message_id)
             except Exception as exc:
-                log.exception('Vehicle photo post failed')
-                await msg.reply_text('Не удалось опубликовать в канал. Проверьте /setchat и права бота в канале. Ошибка: ' + type(exc).__name__)
+                log.exception('Vehicle draft publish failed')
+                await msg.reply_text('Ошибка публикации: ' + type(exc).__name__)
         elif name == 'stats':
             stats = self.db.stats()
             await msg.reply_text('Лиды: ' + ', '.join(f'{k}: {v}' for k, v in stats['leads'].items()) +
