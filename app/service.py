@@ -16,8 +16,8 @@ from .scoring import classify
 log = logging.getLogger(__name__)
 COMMANDS = {'start': 'Начать', 'help': 'Помощь', 'today': 'План на сегодня', 'stock': 'Наличие',
             'price': 'Стоимость', 'post': 'Публикация (админ)', 'setchat': 'Канал (админ)',
-            'pause': 'Пауза (админ)', 'resume': 'Продолжить (админ)', 'stats': 'Статистика (админ)'}
-ADMIN_COMMANDS = {'today', 'post', 'setchat', 'pause', 'resume', 'stats'}
+            'pause': 'Пауза (админ)', 'resume': 'Продолжить (админ)', 'stats': 'Статистика (админ)', 'car': 'Авто с фото (админ)'}
+ADMIN_COMMANDS = {'today', 'post', 'setchat', 'pause', 'resume', 'stats', 'car'}
 
 
 class BotService:
@@ -201,6 +201,23 @@ class BotService:
             else:
                 await msg.reply_text(await self.content.generate())
                 await msg.reply_text('Это предварительный просмотр. Опубликовать: /post send')
+        elif name == 'car':
+            if not msg.reply_to_message or not msg.reply_to_message.photo:
+                await msg.reply_text('Отправьте фото автомобиля, затем ответьте на него командой:\n/car Audi Q3 | 2022 | 40000 км | родная краска')
+                return
+            facts = ' '.join(args).strip()
+            if not facts:
+                await msg.reply_text('После /car укажите модель, год, пробег и состояние.')
+                return
+            target = self.db.get('target_chat')
+            if not target:
+                await msg.reply_text('Сначала задайте канал: /setchat @channel')
+                return
+            caption = await self.content.sales_listing(facts)
+            photo_id = msg.reply_to_message.photo[-1].file_id
+            sent = await context.bot.send_photo(chat_id=target, photo=photo_id, caption=caption[:1024])
+            await msg.reply_text(f'Опубликовано фото + объявление. message_id={sent.message_id}')
+            log.info('Vehicle photo post sent: chat_id=%s; message_id=%s', target, sent.message_id)
         elif name == 'stats':
             stats = self.db.stats()
             await msg.reply_text('Лиды: ' + ', '.join(f'{k}: {v}' for k, v in stats['leads'].items()) +
