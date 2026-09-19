@@ -119,6 +119,20 @@ class Database:
         with self.session() as s:
             return s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
 
+    def update_vehicle(self, code, facts=None, caption=None, photo_file_id=None, publish_at=None, repeat_rule=None, auto_publish=None):
+        with self.session.begin() as s:
+            row = s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
+            if not row:
+                return False
+            if facts is not None: row.facts = facts[:4000]
+            if caption is not None: row.caption = caption[:4000]
+            if photo_file_id is not None: row.photo_file_id = photo_file_id
+            if publish_at is not None: row.publish_at = publish_at
+            if repeat_rule is not None: row.repeat_rule = repeat_rule
+            if auto_publish is not None: row.auto_publish = auto_publish
+            row.updated_at = now()
+            return True
+
     def update_vehicle_status(self, code, status):
         with self.session.begin() as s:
             row = s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
