@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -106,7 +107,10 @@ class BotService:
                 if not caption:
                     caption = await self.content.sales_listing(vehicle.facts)
                 if vehicle.photo_file_id:
-                    sent = await self.application.bot.send_photo(chat_id=target, photo=vehicle.photo_file_id, caption=caption[:1024])
+                    photo = vehicle.photo_file_id
+                    if photo.startswith('local:'):
+                        photo = Path('/app/data/garage_media') / photo.removeprefix('local:')
+                    sent = await self.application.bot.send_photo(chat_id=target, photo=photo, caption=caption[:1024])
                 else:
                     sent = await self.application.bot.send_message(chat_id=target, text=caption[:4096])
                 self.db.mark_vehicle_published(vehicle.code, sent.message_id)
