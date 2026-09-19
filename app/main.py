@@ -84,6 +84,8 @@ def create_app(settings=None):
         follow = x.next_follow_up.astimezone(ZoneInfo(settings.timezone)).strftime('%Y-%m-%dT%H:%M') if x.next_follow_up else ''
         suggestions = getattr(app.state, 'lead_suggestions', {}).get(lead_id, [])
         messages = app.state.db.lead_messages(x.telegram_user_id)
+        matches = app.state.db.match_vehicles_for_lead(lead_id, 5)
+        match_html = ''.join(f'<div style="border:1px solid #ddd;padding:12px;margin:8px 0;border-radius:8px"><b><a href="/garage/{v.code}">{v.code}</a></b> · {escape(v.facts[:220])}<br><small>匹配依据：{escape("、".join(reasons) or "当前可售库存")}</small></div>' for score,v,d,reasons in matches)
         chat_html = ''.join(f'<div style="margin:8px 0;padding:10px;border-radius:8px;background:{"#eef" if m.direction == "in" else "#efe"}"><b>{"客户" if m.direction == "in" else "FULIFENG"}</b> · {m.created_at:%Y-%m-%d %H:%M}<br>{escape(m.text)}</div>' for m in messages)
         suggestions_html = ''.join(f'<form method="post" action="/crm/{lead_id}/send-suggestion"><textarea name="text" rows="3">{escape(t)}</textarea><button type="submit">确认并发送给客户</button></form>' for t in suggestions)
         return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>CRM {lead_id}</title>
@@ -95,7 +97,23 @@ def create_app(settings=None):
         <input name="budget" value="{ev(x.budget)}" placeholder="预算"><input name="city" value="{ev(x.city)}" placeholder="城市 / 国家">
         <select name="vehicle_preference"><option value="{ev(x.vehicle_preference)}">{ev(x.vehicle_preference) or "新车/二手偏好"}</option><option value="new">新车</option><option value="used">二手车</option><option value="either">均可</option></select>
         <input name="purchase_timing" value="{ev(x.purchase_timing)}" placeholder="预计购买时间"><label>下次跟进</label><input type="datetime-local" name="next_follow_up" value="{follow}">
-        <textarea name="manager_note" rows="6" placeholder="销售备注">{ev(x.manager_note)}</textarea><button type="submit">保存客户资料</button></form><h2>AI俄语跟进助手</h2><form method="post" action="/crm/{lead_id}/suggest"><button type="submit">生成3条俄语跟进建议</button></form>{suggestions_html}<h2>Telegram 聊天历史</h2>{chat_html or "暂无聊天记录"}</body></html>"""
+        <textarea name="manager_note" rows="6" placeholder="销售备注">{ev(x.manager_note)}</textarea><button type="submit">保存客户资料</button></form><h2>AI俄语跟进助手</h2><form method="post" action="/crm/{lead_id}/suggest"><button type="submit">生成3条俄语跟进建议</button></form><form method="post" action="/crm/{lead_id}/recommend"><button type="submit">根据当前库存生成推荐话术</button></form>{suggestions_html}<h2>库存智能匹配</h2>{match_html or "暂无可售匹配车辆"}<h2>Telegram 聊天历史</h2>{chat_html or "暂无聊天记录"}</body></html>"""
+
+    @app.post('/crm/{lead_id}/recommend')
+    async def crm_recommend(lead_id: int, _=Depends(garage_auth)):
+        lead = app.state.db.lead(lead_id)
+        if not lead: return HTMLResponse('客户不存在', status_code=404)
+        matches = app.state.db.match_vehicles_for_lead(lead_id, 3)
+        if not matches: return HTMLResponse('当前没有可售匹配车辆', status_code=404)
+        lines = []
+        for score, v, d, reasons in matches:
+            price = (' | ' + str(d.sale_price)) if d and d.sale_price else ''
+            lines.append(v.code + price + ': ' + v.facts[:500])
+        prompt = '客户需求: ' + (lead.last_message or '') + '\n预算: ' + (lead.budget or '') + '\n城市: ' + (lead.city or '') + '\n可售候选车辆:\n' + '\n'.join(lines)
+        suggestions = await app.state.service.content.lead_followup_suggestions(lead, prompt)
+        if not hasattr(app.state, 'lead_suggestions'): app.state.lead_suggestions = {}
+        app.state.lead_suggestions[lead_id] = suggestions
+        return RedirectResponse('/crm/' + str(lead_id), status_code=303)
 
     @app.post('/crm/{lead_id}/suggest')
     async def crm_suggest(lead_id: int, _=Depends(garage_auth)):
