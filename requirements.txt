@@ -6,3 +6,5 @@ SQLAlchemy==2.0.54
 psycopg[binary]==3.3.6
 openai==2.54.0
 tzdata==2026.4
+
+python-multipart==0.0.20
