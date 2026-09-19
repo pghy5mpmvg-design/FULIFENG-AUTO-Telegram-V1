@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, Text, create_engine, select
@@ -132,6 +132,29 @@ class Database:
             row = s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
             if row:
                 row.telegram_message_id, row.updated_at = message_id, now()
+
+    def due_vehicles(self, at=None, limit=20):
+        at = at or now()
+        with self.session() as s:
+            return s.scalars(select(Vehicle).where(
+                Vehicle.auto_publish.is_(True),
+                Vehicle.status == 'available',
+                Vehicle.publish_at.is_not(None),
+                Vehicle.publish_at <= at
+            ).order_by(Vehicle.publish_at).limit(limit)).all()
+
+    def advance_vehicle_schedule(self, code):
+        with self.session.begin() as s:
+            row = s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
+            if not row:
+                return
+            if row.repeat_rule == 'daily':
+                row.publish_at = row.publish_at + timedelta(days=1)
+            elif row.repeat_rule == 'weekly':
+                row.publish_at = row.publish_at + timedelta(days=7)
+            else:
+                row.auto_publish = False
+            row.updated_at = now()
 
     def vehicles(self, limit=20):
         with self.session() as s:
