@@ -103,9 +103,13 @@ def create_app(settings=None):
             return HTMLResponse('车辆不存在', status_code=404)
         value = escape(x.facts, quote=True)
         caption = escape(x.caption or '', quote=True)
+        photos = [p for p in (x.photo_file_ids or '').split('|') if p] or ([x.photo_file_id] if x.photo_file_id else [])
+        gallery = ''.join(f'<div style="display:inline-block;margin:6px"><img src="/garage-media/{escape(p.removeprefix("local:"))}" style="width:150px;height:110px;object-fit:cover"><form method="post" action="/garage/{x.code}/photo-delete" style="margin:0"><input type="hidden" name="photo" value="{escape(p, quote=True)}"><button>删除</button></form></div>' for p in photos if p.startswith('local:'))
+        history = app.state.db.vehicle_publications(x.code)
+        history_html = ''.join(f'<tr><td>{h.created_at:%Y-%m-%d %H:%M}</td><td>{escape(h.mode)}</td><td>{escape(h.status)}</td><td>{h.message_id or "-"}</td></tr>' for h in history)
         return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{x.code}</title>
         <style>body{{font-family:Arial;max-width:850px;margin:30px auto;padding:0 16px}}input,textarea,select,button{{width:100%;padding:10px;margin:6px 0;box-sizing:border-box}}</style></head><body>
-        <a href="/garage">← 返回车库</a><h1>{x.code}</h1><p>状态：{escape(x.status)}</p>
+        <a href="/garage">← 返回车库</a><h1>{x.code}</h1><p>状态：{escape(x.status)}</p><h3>车辆图片</h3><div>{gallery or "暂无图片"}</div>
         <form method="post" action="/garage/{x.code}/edit" enctype="multipart/form-data">
         <label>车辆关键参数</label><textarea name="facts" rows="7">{value}</textarea>
         <label>俄语发布文案</label><textarea name="caption" rows="9">{caption}</textarea>
@@ -183,9 +187,24 @@ def create_app(settings=None):
             else:
                 sent = await app.state.service.application.bot.send_message(chat_id=target, text=caption[:4096])
             app.state.db.mark_vehicle_published(code, sent.message_id)
+            app.state.db.record_vehicle_publication(code, target, sent.message_id, caption, mode='manual')
         except Exception as exc:
             logging.getLogger(__name__).exception('Garage immediate publish failed: %s', type(exc).__name__)
             return HTMLResponse('发布失败：' + escape(type(exc).__name__), status_code=502)
+        return RedirectResponse('/garage/' + code, status_code=303)
+
+    @app.post('/garage/{code}/photo-delete')
+    def garage_photo_delete(code: str, photo: str = Form(...), _=Depends(garage_auth)):
+        x = app.state.db.vehicle(code)
+        if not x:
+            return HTMLResponse('车辆不存在', status_code=404)
+        photos = [p for p in (x.photo_file_ids or '').split('|') if p] or ([x.photo_file_id] if x.photo_file_id else [])
+        photos = [p for p in photos if p != photo]
+        if photo.startswith('local:'):
+            path = media_dir / Path(photo.removeprefix('local:')).name
+            if path.exists():
+                path.unlink()
+        app.state.db.update_vehicle(code, photo_file_id=photos[0] if photos else '', photo_file_ids='|'.join(photos))
         return RedirectResponse('/garage/' + code, status_code=303)
 
     @app.get('/garage-media/{filename}')
