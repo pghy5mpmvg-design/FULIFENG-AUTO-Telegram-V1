@@ -58,6 +58,18 @@ class Vehicle(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class VehiclePublication(Base):
+    __tablename__ = 'vehicle_publications'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    vehicle_code: Mapped[str] = mapped_column(String(40), index=True)
+    chat_id: Mapped[str] = mapped_column(String(100), default='')
+    message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    caption: Mapped[str] = mapped_column(Text, default='')
+    mode: Mapped[str] = mapped_column(String(20), default='manual')
+    status: Mapped[str] = mapped_column(String(20), default='sent')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class CommandEvent(Base):
     __tablename__ = 'command_events'
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -175,6 +187,17 @@ class Database:
     def vehicles(self, limit=20):
         with self.session() as s:
             return s.scalars(select(Vehicle).order_by(Vehicle.id.desc()).limit(limit)).all()
+
+    def record_vehicle_publication(self, code, chat_id, message_id, caption, mode='manual', status='sent'):
+        with self.session.begin() as s:
+            s.add(VehiclePublication(vehicle_code=code, chat_id=str(chat_id), message_id=message_id,
+                                     caption=caption[:4000], mode=mode, status=status))
+
+    def vehicle_publications(self, code, limit=30):
+        with self.session() as s:
+            return s.scalars(select(VehiclePublication).where(
+                VehiclePublication.vehicle_code == code.upper()
+            ).order_by(VehiclePublication.id.desc()).limit(limit)).all()
 
     def stats(self):
         with self.session() as s:
