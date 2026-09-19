@@ -257,6 +257,22 @@ class Database:
                 VehiclePublication.vehicle_code == code.upper()
             ).order_by(VehiclePublication.id.desc()).limit(limit)).all()
 
+    def garage_stats(self):
+        with self.session() as s:
+            vehicles = s.scalars(select(Vehicle)).all()
+            pubs = s.scalars(select(VehiclePublication)).all()
+            today = now().date()
+            return {
+                'total': len(vehicles),
+                'available': sum(v.status == 'available' for v in vehicles),
+                'reserved': sum(v.status == 'reserved' for v in vehicles),
+                'sold': sum(v.status == 'sold' for v in vehicles),
+                'auto': sum(v.auto_publish for v in vehicles),
+                'due': sum(bool(v.auto_publish and v.status == 'available' and v.publish_at and v.publish_at <= now()) for v in vehicles),
+                'sent_today': sum(p.status == 'sent' and p.created_at.date() == today for p in pubs),
+                'recent': sorted(pubs, key=lambda p: p.id, reverse=True)[:12],
+            }
+
     def stats(self):
         with self.session() as s:
             leads = s.scalars(select(Lead)).all()
