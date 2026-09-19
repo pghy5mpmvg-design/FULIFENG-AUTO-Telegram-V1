@@ -70,6 +70,26 @@ class VehiclePublication(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class VehicleDetail(Base):
+    __tablename__ = 'vehicle_details'
+    vehicle_code: Mapped[str] = mapped_column(String(40), primary_key=True)
+    brand: Mapped[str] = mapped_column(String(100), default='')
+    model: Mapped[str] = mapped_column(String(160), default='')
+    year: Mapped[str] = mapped_column(String(20), default='')
+    condition: Mapped[str] = mapped_column(String(30), default='used')
+    mileage_km: Mapped[str] = mapped_column(String(40), default='')
+    engine: Mapped[str] = mapped_column(String(100), default='')
+    transmission: Mapped[str] = mapped_column(String(100), default='')
+    drivetrain: Mapped[str] = mapped_column(String(100), default='')
+    color: Mapped[str] = mapped_column(String(100), default='')
+    paint_condition: Mapped[str] = mapped_column(String(200), default='')
+    purchase_price_cny: Mapped[str] = mapped_column(String(60), default='')
+    sale_price: Mapped[str] = mapped_column(String(80), default='')
+    highlights: Mapped[str] = mapped_column(Text, default='')
+    notes: Mapped[str] = mapped_column(Text, default='')
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class CommandEvent(Base):
     __tablename__ = 'command_events'
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -160,6 +180,24 @@ class Database:
             row = s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
             if row:
                 row.telegram_message_id, row.updated_at = message_id, now()
+
+    def vehicle_detail(self, code):
+        with self.session() as s:
+            return s.get(VehicleDetail, code.upper())
+
+    def save_vehicle_detail(self, code, **values):
+        allowed = {'brand','model','year','condition','mileage_km','engine','transmission','drivetrain','color',
+                   'paint_condition','purchase_price_cny','sale_price','highlights','notes'}
+        with self.session.begin() as s:
+            row = s.get(VehicleDetail, code.upper())
+            if row is None:
+                row = VehicleDetail(vehicle_code=code.upper())
+                s.add(row)
+            for key, value in values.items():
+                if key in allowed:
+                    setattr(row, key, (value or '')[:4000] if key in ('highlights','notes') else (value or '')[:200])
+            row.updated_at = now()
+            return True
 
     def duplicate_vehicle(self, code):
         with self.session.begin() as s:
