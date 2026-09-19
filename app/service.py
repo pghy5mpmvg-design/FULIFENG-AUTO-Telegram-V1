@@ -59,6 +59,7 @@ class BotService:
             self.scheduler.add_job(self.scheduled, CronTrigger(hour=hour, minute=0, timezone=self.settings.timezone),
                                    args=[hour], id=f'post-{hour}', max_instances=1, coalesce=True, misfire_grace_time=300)
         self.scheduler.add_job(self.publish_due_vehicles, 'interval', minutes=1, id='vehicle-due', max_instances=1, coalesce=True)
+        self.scheduler.add_job(self.followup_reminders, 'interval', minutes=30, id='lead-followups', max_instances=1, coalesce=True)
         self.scheduler.start()
 
     async def poll(self):
@@ -125,6 +126,27 @@ class BotService:
             except Exception as exc:
                 self.db.record_vehicle_publication(vehicle.code, target, None, vehicle.caption or vehicle.facts, mode='scheduled', status='failed:' + type(exc).__name__)
                 log.exception('Scheduled vehicle publish failed: code=%s; error=%s', vehicle.code, type(exc).__name__)
+
+    async def followup_reminders(self):
+        leads = self.db.due_followups()
+        if not leads or not self.settings.admin_ids:
+            return
+        for lead in leads:
+            key = 'followup_alert:' + str(lead.id) + ':' + (lead.next_follow_up.isoformat() if lead.next_follow_up else '')
+            if self.db.get(key) == 'sent':
+                continue
+            vehicle = (' | ' + lead.vehicle_code) if lead.vehicle_code else ''
+            note = (lead.manager_note or lead.last_message or '')[:500]
+            text = f'⏰ CRM 跟进提醒 | {lead.grade}{vehicle}\n客户: @{lead.username or "-"} | {lead.first_name or "-"}\n预算: {lead.budget or "-"} | 城市: {lead.city or "-"}\n{note}'
+            delivered = False
+            for admin_id in self.settings.admin_ids:
+                try:
+                    await self.application.bot.send_message(chat_id=admin_id, text=text)
+                    delivered = True
+                except Exception as exc:
+                    log.warning('Follow-up reminder failed: %s', type(exc).__name__)
+            if delivered:
+                self.db.set(key, 'sent')
 
     async def scheduled(self, hour):
         date = datetime.now(ZoneInfo(self.settings.timezone)).date().isoformat()
