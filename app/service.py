@@ -62,7 +62,7 @@ class BotService:
         while True:
             try:
                 updates = await self.application.bot.get_updates(offset=offset, timeout=25, read_timeout=35,
-                                                                  allowed_updates=['message'])
+                                                                  allowed_updates=['message', 'channel_post'])
                 self.polling_ok, self.error_code = True, None
                 if updates:
                     log.info('Telegram received %d update(s)', len(updates))
@@ -138,7 +138,7 @@ class BotService:
         name = msg.text.split()[0].split('@')[0][1:].lower()
         args = context.args or []
         admin = user.id in self.settings.admin_ids
-        log.info('Command received: /%s; admin=%s; chat_type=%s', name, admin, update.effective_chat.type)
+        log.info('Command received: /%s; admin=%s; chat_type=%s; reply_has_photo=%s; args_count=%d', name, admin, update.effective_chat.type, bool(msg.reply_to_message and msg.reply_to_message.photo), len(args))
         if name in ADMIN_COMMANDS and (not admin or update.effective_chat.type != 'private'):
             await msg.reply_text('Команда доступна администратору в личном чате.')
             log.info('Command denied: /%s', name)
@@ -202,10 +202,12 @@ class BotService:
                 await msg.reply_text(await self.content.generate())
                 await msg.reply_text('Это предварительный просмотр. Опубликовать: /post send')
         elif name == 'car':
-            if not msg.reply_to_message or not msg.reply_to_message.photo:
-                await msg.reply_text('Отправьте фото автомобиля, затем ответьте на него командой:\n/car Audi Q3 | 2022 | 40000 км | родная краска')
-                return
             facts = ' '.join(args).strip()
+            photo_source = msg.reply_to_message if msg.reply_to_message and msg.reply_to_message.photo else None
+            if not photo_source:
+                await msg.reply_text('Фото не найдено. В Telegram нажмите на фото → Ответить, затем отправьте:\n/car Audi Q3 | 2022 | 40000 км | родная краска')
+                log.info('Vehicle command missing replied photo')
+                return
             if not facts:
                 await msg.reply_text('После /car укажите модель, год, пробег и состояние.')
                 return
@@ -215,7 +217,7 @@ class BotService:
                 return
             await msg.reply_text('Фото и данные получены. Готовлю публикацию…')
             caption = await self.content.sales_listing(facts)
-            photo_id = msg.reply_to_message.photo[-1].file_id
+            photo_id = photo_source.photo[-1].file_id
             try:
                 sent = await context.bot.send_photo(chat_id=target, photo=photo_id, caption=caption[:1024])
                 await msg.reply_text(f'Опубликовано фото + объявление. message_id={sent.message_id}')
