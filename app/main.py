@@ -1,13 +1,15 @@
 import logging
 import os
 import uuid
+import secrets
+from pathlib import Path
 from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Form, UploadFile, File
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, Form, UploadFile, File, Request, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
 from sqlalchemy import text
 
 from .config import Settings
@@ -50,6 +52,8 @@ def create_app(settings=None):
             db.engine.dispose()
 
     app = FastAPI(title='FULIFENG AUTO Telegram V1', lifespan=lifespan, docs_url=None, redoc_url=None)
+    media_dir = Path('/app/data/garage_media') if os.getenv('RAILWAY_SERVICE_ID') else Path('./data/garage_media')
+    media_dir.mkdir(parents=True, exist_ok=True)
 
 
     @app.get('/garage', response_class=HTMLResponse)
@@ -112,16 +116,25 @@ def create_app(settings=None):
             data = await photo.read()
             if len(data) > 10 * 1024 * 1024:
                 return HTMLResponse('图片不能超过10MB', status_code=400)
-            target = app.state.db.get('target_chat')
-            if not target:
-                return HTMLResponse('请先在 Telegram 设置目标频道 /setchat', status_code=400)
-            sent = await app.state.service.application.bot.send_photo(chat_id=target, photo=data, caption='车库图片上传：' + code)
-            photo_file_id = sent.photo[-1].file_id
+            suffix = Path(photo.filename).suffix.lower()
+            if suffix not in ('.jpg', '.jpeg', '.png', '.webp'):
+                return HTMLResponse('仅支持 JPG/PNG/WEBP', status_code=400)
+            filename = f'{code}-{uuid.uuid4().hex}{suffix}'
+            (media_dir / filename).write_bytes(data)
+            photo_file_id = 'local:' + filename
         ok = app.state.db.update_vehicle(code, facts=facts, caption=caption, photo_file_id=photo_file_id,
                                          publish_at=scheduled, repeat_rule=repeat_rule, auto_publish=auto_publish == '1')
         if not ok:
             return HTMLResponse('车辆不存在', status_code=404)
         return RedirectResponse('/garage/' + code, status_code=303)
+
+    @app.get('/garage-media/{filename}')
+    def garage_media(filename: str):
+        safe = Path(filename).name
+        path = media_dir / safe
+        if not path.exists():
+            raise HTTPException(status_code=404)
+        return FileResponse(path)
 
     @app.get('/health')
     def health():
