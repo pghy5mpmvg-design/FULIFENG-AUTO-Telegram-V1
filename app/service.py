@@ -336,7 +336,7 @@ class BotService:
             self.db.record_lead_message(user.id, 'in', msg.text or '')
             crm_grade = self.db.upsert_lead(user.id, user.username or '', user.first_name or '',
                                             user.language_code or '', vehicle_code, msg.text or '')
-            if crm_grade == 'A' and self.settings.admin_ids:
+            if crm_grade in ('A+', 'A') and self.settings.admin_ids:
                 vehicle_note = (' | ' + vehicle_code) if vehicle_code else ''
                 alert = f'🔥 Новый лид {crm_grade}{vehicle_note}\\n@{user.username or "-"} | ID {user.id}\\n{(msg.text or "")[:700]}'
                 for admin_id in self.settings.admin_ids:
