@@ -102,6 +102,8 @@ def create_app(settings=None):
         if not x:
             return HTMLResponse('车辆不存在', status_code=404)
         value = escape(x.facts, quote=True)
+        d = app.state.db.vehicle_detail(x.code)
+        def dv(name): return escape(getattr(d, name, '') if d else '', quote=True)
         caption = escape(x.caption or '', quote=True)
         photos = [p for p in (x.photo_file_ids or '').split('|') if p] or ([x.photo_file_id] if x.photo_file_id else [])
         gallery = ''.join(f'<div style="display:inline-block;margin:6px"><img src="/garage-media/{escape(p.removeprefix("local:"))}" style="width:150px;height:110px;object-fit:cover"><form method="post" action="/garage/{x.code}/photo-cover"><input type="hidden" name="photo" value="{escape(p, quote=True)}"><button>设为封面</button></form><form method="post" action="/garage/{x.code}/photo-delete"><input type="hidden" name="photo" value="{escape(p, quote=True)}"><button>删除</button></form></div>' for p in photos if p.startswith('local:'))
@@ -110,7 +112,7 @@ def create_app(settings=None):
         return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{x.code}</title>
         <style>body{{font-family:Arial;max-width:850px;margin:30px auto;padding:0 16px}}input,textarea,select,button{{width:100%;padding:10px;margin:6px 0;box-sizing:border-box}}</style></head><body>
         <a href="/garage">← 返回车库</a><h1>{x.code}</h1><p>状态：{escape(x.status)}</p><h3>车辆图片</h3><div>{gallery or "暂无图片"}</div>
-        <form method="post" action="/garage/{x.code}/edit" enctype="multipart/form-data">
+        <form method="post" action="/garage/{x.code}/details"><h3>结构化车辆参数</h3><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><input name="brand" value="{dv('brand')}" placeholder="品牌"><input name="model" value="{dv('model')}" placeholder="车型"><input name="year" value="{dv('year')}" placeholder="年份"><select name="condition"><option value="used">二手车</option><option value="new">新车</option></select><input name="mileage_km" value="{dv('mileage_km')}" placeholder="里程 km"><input name="engine" value="{dv('engine')}" placeholder="发动机"><input name="transmission" value="{dv('transmission')}" placeholder="变速箱"><input name="drivetrain" value="{dv('drivetrain')}" placeholder="驱动方式"><input name="color" value="{dv('color')}" placeholder="颜色"><input name="paint_condition" value="{dv('paint_condition')}" placeholder="漆面/车况"><input name="purchase_price_cny" value="{dv('purchase_price_cny')}" placeholder="中国采购价 CNY"><input name="sale_price" value="{dv('sale_price')}" placeholder="对外报价"></div><textarea name="highlights" rows="3" placeholder="配置亮点">{dv('highlights')}</textarea><textarea name="notes" rows="3" placeholder="内部备注">{dv('notes')}</textarea><button type="submit">保存车辆参数</button></form><form method="post" action="/garage/{x.code}/edit" enctype="multipart/form-data">
         <label>车辆关键参数</label><textarea name="facts" rows="7">{value}</textarea>
         <label>俄语发布文案</label><textarea name="caption" rows="9">{caption}</textarea>
         <label>投放时间</label><input type="datetime-local" name="publish_at">
@@ -191,6 +193,24 @@ def create_app(settings=None):
         except Exception as exc:
             logging.getLogger(__name__).exception('Garage immediate publish failed: %s', type(exc).__name__)
             return HTMLResponse('发布失败：' + escape(type(exc).__name__), status_code=502)
+        return RedirectResponse('/garage/' + code, status_code=303)
+
+    @app.post('/garage/{code}/details')
+    def garage_details(code: str, brand: str = Form(''), model: str = Form(''), year: str = Form(''),
+                       condition: str = Form('used'), mileage_km: str = Form(''), engine: str = Form(''),
+                       transmission: str = Form(''), drivetrain: str = Form(''), color: str = Form(''),
+                       paint_condition: str = Form(''), purchase_price_cny: str = Form(''), sale_price: str = Form(''),
+                       highlights: str = Form(''), notes: str = Form(''), _=Depends(garage_auth)):
+        x = app.state.db.vehicle(code)
+        if not x: return HTMLResponse('车辆不存在', status_code=404)
+        app.state.db.save_vehicle_detail(code, brand=brand, model=model, year=year, condition=condition,
+            mileage_km=mileage_km, engine=engine, transmission=transmission, drivetrain=drivetrain, color=color,
+            paint_condition=paint_condition, purchase_price_cny=purchase_price_cny, sale_price=sale_price,
+            highlights=highlights, notes=notes)
+        facts = ' | '.join(v for v in [f'{brand} {model}'.strip(), year, ('新车' if condition == 'new' else '二手车'),
+            (mileage_km + ' km') if mileage_km else '', engine, transmission, drivetrain, color, paint_condition,
+            ('报价: ' + sale_price) if sale_price else '', highlights] if v)
+        app.state.db.update_vehicle(code, facts=facts)
         return RedirectResponse('/garage/' + code, status_code=303)
 
     @app.post('/garage/{code}/duplicate')
