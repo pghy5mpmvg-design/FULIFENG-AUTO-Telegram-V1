@@ -116,6 +116,36 @@ class ContentGenerator:
             log.warning('Sales AI fallback: %s', type(exc).__name__)
             return fallback
 
+    async def lead_followup_suggestions(self, lead, vehicle_facts=''):
+        base = (
+            f'Клиент: {lead.first_name or ""}; последний запрос: {lead.last_message or ""}; '
+            f'автомобиль: {lead.vehicle_code or ""}; бюджет: {lead.budget or ""}; город: {lead.city or ""}; '
+            f'срок покупки: {lead.purchase_timing or ""}; подтвержденные данные авто: {vehicle_facts or ""}'
+        )
+        fallback = [
+            'Здравствуйте! Спасибо за ваш запрос. Подскажите, пожалуйста, актуален ли для вас подбор автомобиля?',
+            'Здравствуйте! Могу продолжить подбор по вашему запросу. Уточните, пожалуйста, ваш бюджет и город доставки.',
+            'Добрый день! Если вопрос по автомобилю ещё актуален, я подготовлю подтверждённые данные по цене, комплектации и доставке.'
+        ]
+        if not self.client:
+            return fallback
+        try:
+            response = await self.client.responses.create(
+                model=self.settings.openai_model,
+                instructions=(
+                    'Prepare exactly 3 concise Russian Telegram follow-up reply options for a vehicle sales manager. '
+                    'Use only supplied customer and vehicle facts. Do not invent price, stock, specs, customs, discounts, '
+                    'delivery dates, warranty or documents. Do not pressure the customer. Each option must be natural and '
+                    'different: 1) neutral follow-up, 2) qualification question, 3) next-step proposal. '
+                    'Return only the three options separated by a line containing --- . Each under 500 characters.'
+                ),
+                input=base, max_output_tokens=500, store=False)
+            parts = [x.strip()[:500] for x in response.output_text.split('---') if x.strip()]
+            return parts[:3] if len(parts) >= 3 else fallback
+        except Exception as exc:
+            log.warning('Lead follow-up fallback: %s', type(exc).__name__)
+            return fallback
+
     async def close(self):
         if self.client:
             await self.client.close()
