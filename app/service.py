@@ -16,8 +16,8 @@ from .scoring import classify
 log = logging.getLogger(__name__)
 COMMANDS = {'start': 'Начать', 'help': 'Помощь', 'today': 'План на сегодня', 'stock': 'Наличие',
             'price': 'Стоимость', 'post': 'Публикация (админ)', 'setchat': 'Канал (админ)',
-            'pause': 'Пауза (админ)', 'resume': 'Продолжить (админ)', 'stats': 'Статистика (админ)', 'car': 'Авто с фото (админ)', 'edit': 'Изменить текст (админ)', 'publish': 'Опубликовать черновик (админ)'}
-ADMIN_COMMANDS = {'today', 'post', 'setchat', 'pause', 'resume', 'stats', 'car', 'edit', 'publish'}
+            'pause': 'Пауза (админ)', 'resume': 'Продолжить (админ)', 'stats': 'Статистика (админ)', 'car': 'Авто с фото (админ)', 'edit': 'Изменить текст (админ)', 'publish': 'Опубликовать черновик (админ)', 'inventory': 'Склад (админ)', 'sold': 'Продано (админ)'}
+ADMIN_COMMANDS = {'today', 'post', 'setchat', 'pause', 'resume', 'stats', 'car', 'edit', 'publish', 'inventory', 'sold'}
 
 
 class BotService:
@@ -213,8 +213,9 @@ class BotService:
                 return
             await msg.reply_text('Фото и данные получены. Готовлю текст…')
             caption = await self.content.sales_listing(facts)
-            self.car_drafts[user.id] = {'photo_id': photo_source.photo[-1].file_id, 'caption': caption, 'facts': facts}
-            await msg.reply_text('ПРЕДПРОСМОТР:\n\n' + caption[:3500] + '\n\nИзменить: /edit новый текст\nОпубликовать: /publish')
+            code = self.db.create_vehicle(facts, caption, photo_source.photo[-1].file_id)
+            self.car_drafts[user.id] = {'code': code, 'photo_id': photo_source.photo[-1].file_id, 'caption': caption, 'facts': facts}
+            await msg.reply_text('ID: ' + code + '\nПРЕДПРОСМОТР:\n\n' + caption[:3500] + '\n\nИзменить: /edit новый текст\nОпубликовать: /publish')
         elif name == 'edit':
             draft = self.car_drafts.get(user.id)
             text = ' '.join(args).strip()
@@ -237,12 +238,27 @@ class BotService:
                 return
             try:
                 sent = await context.bot.send_photo(chat_id=target, photo=draft['photo_id'], caption=draft['caption'][:1024])
+                self.db.mark_vehicle_published(draft['code'], sent.message_id)
                 self.car_drafts.pop(user.id, None)
                 await msg.reply_text(f'Опубликовано. message_id={sent.message_id}')
                 log.info('Vehicle draft published: chat_id=%s; message_id=%s', target, sent.message_id)
             except Exception as exc:
                 log.exception('Vehicle draft publish failed')
                 await msg.reply_text('Ошибка публикации: ' + type(exc).__name__)
+        elif name == 'inventory':
+            rows = self.db.vehicles()
+            if not rows:
+                await msg.reply_text('Склад пуст.')
+            else:
+                await msg.reply_text('\n'.join(f'{x.code} | {x.status} | {x.facts[:120]}' for x in rows)[:3900])
+        elif name == 'sold':
+            if len(args) != 1:
+                await msg.reply_text('/sold FF-00001')
+                return
+            if self.db.update_vehicle_status(args[0], 'sold'):
+                await msg.reply_text(args[0].upper() + ' отмечен как проданный. Автопродвижение для него отключено.')
+            else:
+                await msg.reply_text('Автомобиль не найден.')
         elif name == 'stats':
             stats = self.db.stats()
             await msg.reply_text('Лиды: ' + ', '.join(f'{k}: {v}' for k, v in stats['leads'].items()) +
