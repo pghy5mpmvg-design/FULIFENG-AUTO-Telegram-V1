@@ -56,6 +56,7 @@ class BotService:
         for hour in (9, 13, 18, 21):
             self.scheduler.add_job(self.scheduled, CronTrigger(hour=hour, minute=0, timezone=self.settings.timezone),
                                    args=[hour], id=f'post-{hour}', max_instances=1, coalesce=True, misfire_grace_time=300)
+        self.scheduler.add_job(self.publish_due_vehicles, 'interval', minutes=1, id='vehicle-due', max_instances=1, coalesce=True)
         self.scheduler.start()
 
     async def poll(self):
@@ -92,6 +93,27 @@ class BotService:
                 await self.application.stop()
             await self.application.shutdown()
         await self.content.close()
+
+    async def publish_due_vehicles(self):
+        if self.db.get('paused') != 'false':
+            return
+        target = self.db.get('target_chat')
+        if not target:
+            return
+        for vehicle in self.db.due_vehicles():
+            try:
+                caption = vehicle.caption.strip() if vehicle.caption else ''
+                if not caption:
+                    caption = await self.content.sales_listing(vehicle.facts)
+                if vehicle.photo_file_id:
+                    sent = await self.application.bot.send_photo(chat_id=target, photo=vehicle.photo_file_id, caption=caption[:1024])
+                else:
+                    sent = await self.application.bot.send_message(chat_id=target, text=caption[:4096])
+                self.db.mark_vehicle_published(vehicle.code, sent.message_id)
+                self.db.advance_vehicle_schedule(vehicle.code)
+                log.info('Scheduled vehicle published: code=%s; chat_id=%s; message_id=%s', vehicle.code, target, sent.message_id)
+            except Exception as exc:
+                log.exception('Scheduled vehicle publish failed: code=%s; error=%s', vehicle.code, type(exc).__name__)
 
     async def scheduled(self, hour):
         date = datetime.now(ZoneInfo(self.settings.timezone)).date().isoformat()
