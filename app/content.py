@@ -51,6 +51,41 @@ class ContentGenerator:
             log.warning('Vehicle listing fallback: %s', type(exc).__name__)
             return fallback[:1024]
 
+    async def structured_vehicle_listing(self, detail, facts):
+        condition = getattr(detail, 'condition', 'used') if detail else 'used'
+        title_bits = [getattr(detail, 'brand', ''), getattr(detail, 'model', ''), getattr(detail, 'year', '')] if detail else []
+        title = ' '.join(x for x in title_bits if x).strip() or facts.split('|')[0].strip()
+        fallback_lines = ['🚘 ' + title]
+        if detail:
+            pairs = [('Год', detail.year), ('Пробег', (detail.mileage_km + ' км') if detail.mileage_km else ''),
+                     ('Двигатель', detail.engine), ('КПП', detail.transmission), ('Привод', detail.drivetrain),
+                     ('Цвет', detail.color), ('Состояние', detail.paint_condition), ('Цена', detail.sale_price)]
+            fallback_lines += [f'• {k}: {v}' for k, v in pairs if v]
+            if detail.highlights:
+                fallback_lines += ['', '⭐ ' + detail.highlights]
+        fallback_lines += ['', '📩 Напишите нам для уточнения комплектации, цены и доставки.',
+                           'FULIFENG AUTO — Ваш автосалон в Китае 🇨🇳']
+        fallback = '\n'.join(fallback_lines)[:1024]
+        if not self.client:
+            return fallback
+        try:
+            response = await self.client.responses.create(
+                model=self.settings.openai_model,
+                instructions=(
+                    'Create a polished Russian Telegram car advertisement for FULIFENG AUTO. '
+                    'The vehicle is ' + ('new' if condition == 'new' else 'used') + '. '
+                    'Structure: short title, confirmed key parameters, 3-5 concise selling points only when supported '
+                    'by supplied data, then CTA. Never invent specifications, equipment, condition, price, availability, '
+                    'customs cost, warranty or delivery time. Do not convert currencies. Under 850 characters. '
+                    'End exactly with: FULIFENG AUTO — Ваш автосалон в Китае 🇨🇳'
+                ),
+                input='Confirmed structured facts: ' + facts,
+                max_output_tokens=400, store=False)
+            return response.output_text.strip()[:1024] or fallback
+        except Exception as exc:
+            log.warning('Structured listing fallback: %s', type(exc).__name__)
+            return fallback
+
     async def sales_reply(self, text, stock='', prices=''):
         fallback = 'Спасибо! Укажите, пожалуйста, модель, бюджет и город доставки.'
         if not self.client:
