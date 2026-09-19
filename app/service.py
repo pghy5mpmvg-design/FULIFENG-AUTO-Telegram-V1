@@ -209,7 +209,14 @@ class BotService:
 
     async def message(self, update, context):
         user, msg = update.effective_user, update.effective_message
-        if not user or user.is_bot or not msg or user.id in self.settings.admin_ids:
+        if not user or user.is_bot or not msg:
+            return
+        if user.id in self.settings.admin_ids:
+            sent = await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text='Сообщение получено. Бот работает. Напишите /start для меню.'
+            )
+            log.info('Admin message reply sent: chat_id=%s; message_id=%s', update.effective_chat.id, sent.message_id)
             return
         score, grade, reasons, optout = classify(msg.text)
         grade = self.db.record_lead(user.id, user.username, msg.text, score, grade, reasons, optout)
