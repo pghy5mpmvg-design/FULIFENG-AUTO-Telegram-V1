@@ -68,7 +68,12 @@ def create_app(settings=None):
     @app.get('/garage-dashboard', response_class=HTMLResponse)
     def garage_dashboard(_=Depends(garage_auth)):
         s = app.state.db.garage_stats()
+        upcoming = app.state.db.upcoming_vehicles()
+        failures = app.state.db.failed_vehicle_publications()
         recent = ''.join(f'<tr><td>{escape(p.vehicle_code)}</td><td>{p.created_at:%Y-%m-%d %H:%M}</td><td>{escape(p.mode)}</td><td>{escape(p.status)}</td><td>{p.message_id or "-"}</td></tr>' for p in s['recent'])
+        upcoming_html = ''.join(f'<tr><td><a href="/garage/{v.code}">{v.code}</a></td><td>{escape(v.facts[:100])}</td><td>{v.publish_at.astimezone(ZoneInfo(settings.timezone)).strftime("%Y-%m-%d %H:%M") if v.publish_at else "-"}</td><td>{escape(v.repeat_rule)}</td></tr>' for v in upcoming)
+        failed_html = ''.join(f'<tr><td>{escape(p.vehicle_code)}</td><td>{p.created_at:%Y-%m-%d %H:%M}</td><td>{escape(p.status)}</td></tr>' for p in failures)
+        bot_ok = bool(app.state.service.polling_ok)
         return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>FULIFENG AUTO 运营控制台</title>
         <style>body{{font-family:Arial;max-width:1100px;margin:30px auto;padding:0 16px}}.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}}.box{{padding:18px;border:1px solid #ddd;border-radius:12px}}.n{{font-size:30px;font-weight:bold}}table{{width:100%;border-collapse:collapse;margin-top:20px}}td,th{{padding:9px;border-bottom:1px solid #ddd;text-align:left}}a{{text-decoration:none}}</style></head><body>
         <h1>FULIFENG AUTO 运营控制台</h1><p><a href="/garage">→ 进入车辆车库</a></p><div class="stats">
@@ -76,7 +81,7 @@ def create_app(settings=None):
         <div class="box">已预订<div class="n">{s['reserved']}</div></div><div class="box">已售<div class="n">{s['sold']}</div></div>
         <div class="box">自动推广<div class="n">{s['auto']}</div></div><div class="box">等待投放<div class="n">{s['due']}</div></div>
         <div class="box">今日已发布<div class="n">{s['sent_today']}</div></div></div>
-        <h2>最近发布记录</h2><table><tr><th>车辆</th><th>时间</th><th>方式</th><th>状态</th><th>Telegram ID</th></tr>{recent}</table></body></html>"""
+        <h2>系统状态</h2><p>Telegram Bot：<b>{"运行中" if bot_ok else "未运行/启动中"}</b>　调度器：<b>{"运行中" if app.state.service.scheduler.running else "未运行"}</b>　时区：{escape(settings.timezone)}</p><h2>下一批投放计划</h2><table><tr><th>车辆</th><th>信息</th><th>时间</th><th>周期</th></tr>{upcoming_html}</table><h2>失败任务</h2><table><tr><th>车辆</th><th>时间</th><th>错误</th></tr>{failed_html or "<tr><td colspan=3>暂无失败任务</td></tr>"}</table><h2>最近发布记录</h2><table><tr><th>车辆</th><th>时间</th><th>方式</th><th>状态</th><th>Telegram ID</th></tr>{recent}</table></body></html>"""
 
     @app.get('/garage', response_class=HTMLResponse)
     def garage(q: str = '', status: str = '', _=Depends(garage_auth)):
