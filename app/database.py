@@ -90,6 +90,21 @@ class VehicleDetail(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class Lead(Base):
+    __tablename__ = 'leads'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    username: Mapped[str] = mapped_column(String(200), default='')
+    first_name: Mapped[str] = mapped_column(String(200), default='')
+    language_code: Mapped[str] = mapped_column(String(30), default='')
+    vehicle_code: Mapped[str] = mapped_column(String(40), default='', index=True)
+    grade: Mapped[str] = mapped_column(String(10), default='C')
+    last_message: Mapped[str] = mapped_column(Text, default='')
+    status: Mapped[str] = mapped_column(String(30), default='new')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class CommandEvent(Base):
     __tablename__ = 'command_events'
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -268,6 +283,27 @@ class Database:
             return s.scalars(select(VehiclePublication).where(
                 VehiclePublication.status != 'sent'
             ).order_by(VehiclePublication.id.desc()).limit(limit)).all()
+
+    def upsert_lead(self, telegram_user_id, username='', first_name='', language_code='', vehicle_code='', last_message=''):
+        with self.session.begin() as s:
+            row = s.scalar(select(Lead).where(Lead.telegram_user_id == telegram_user_id))
+            if row is None:
+                row = Lead(telegram_user_id=telegram_user_id)
+                s.add(row)
+            row.username = username or row.username
+            row.first_name = first_name or row.first_name
+            row.language_code = language_code or row.language_code
+            row.vehicle_code = vehicle_code or row.vehicle_code
+            row.last_message = (last_message or '')[:4000]
+            text = (last_message or '').lower()
+            hot = any(x in text for x in ['купить','цена','стоимость','заказать','оплата','доставка','buy','price','购买','价格','付款','运输'])
+            row.grade = 'A' if vehicle_code and hot else ('B' if hot or vehicle_code else 'C')
+            row.updated_at = now()
+            return row.grade
+
+    def leads(self, limit=100):
+        with self.session() as s:
+            return s.scalars(select(Lead).order_by(Lead.updated_at.desc()).limit(limit)).all()
 
     def garage_stats(self):
         with self.session() as s:
