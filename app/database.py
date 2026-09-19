@@ -257,6 +257,18 @@ class Database:
                 VehiclePublication.vehicle_code == code.upper()
             ).order_by(VehiclePublication.id.desc()).limit(limit)).all()
 
+    def upcoming_vehicles(self, limit=20):
+        with self.session() as s:
+            return s.scalars(select(Vehicle).where(
+                Vehicle.auto_publish.is_(True), Vehicle.status == 'available', Vehicle.publish_at.is_not(None)
+            ).order_by(Vehicle.publish_at).limit(limit)).all()
+
+    def failed_vehicle_publications(self, limit=20):
+        with self.session() as s:
+            return s.scalars(select(VehiclePublication).where(
+                VehiclePublication.status != 'sent'
+            ).order_by(VehiclePublication.id.desc()).limit(limit)).all()
+
     def garage_stats(self):
         with self.session() as s:
             vehicles = s.scalars(select(Vehicle)).all()
