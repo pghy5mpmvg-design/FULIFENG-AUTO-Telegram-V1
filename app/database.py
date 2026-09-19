@@ -50,6 +50,9 @@ class Vehicle(Base):
     photo_file_id: Mapped[str] = mapped_column(Text, default='')
     status: Mapped[str] = mapped_column(String(20), default='available')
     telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    publish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    repeat_rule: Mapped[str] = mapped_column(String(20), default='once')
+    auto_publish: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
@@ -104,9 +107,9 @@ class Database:
             return lead.grade
 
 
-    def create_vehicle(self, facts, caption, photo_file_id):
+    def create_vehicle(self, facts, caption, photo_file_id, publish_at=None, repeat_rule='once', auto_publish=False):
         with self.session.begin() as s:
-            row = Vehicle(facts=facts[:4000], caption=caption[:4000], photo_file_id=photo_file_id)
+            row = Vehicle(facts=facts[:4000], caption=caption[:4000], photo_file_id=photo_file_id, publish_at=publish_at, repeat_rule=repeat_rule, auto_publish=auto_publish)
             s.add(row)
             s.flush()
             row.code = f'FF-{row.id:05d}'
