@@ -70,9 +70,9 @@ def create_app(settings=None):
         rows = app.state.db.vehicles(100)
         if q: rows = [x for x in rows if q.lower() in x.facts.lower() or q.lower() in (x.code or '').lower()]
         if status: rows = [x for x in rows if x.status == status]
-        body = ''.join(f"<tr><td><a href="/garage/{x.code}">{escape(x.code or '')}</a></td><td>{escape(x.facts)}</td><td>{escape(x.status)}</td><td>{x.publish_at.astimezone(ZoneInfo(settings.timezone)).strftime('%Y-%m-%d %H:%M') if x.publish_at else '-'}</td><td>{'开启' if x.auto_publish else '关闭'} / {escape(x.repeat_rule)}</td></tr>" for x in rows)
+        body = ''.join(f"""<div class="card"><div class="cover">{('<img src="/garage-media/'+escape((x.photo_file_ids.split('|')[0] if x.photo_file_ids else x.photo_file_id).removeprefix('local:'))+'">') if (x.photo_file_ids or x.photo_file_id).startswith('local:') else '🚘'}</div><div><h3><a href="/garage/{x.code}">{escape(x.code or '')}</a></h3><p>{escape(x.facts[:180])}</p><b>{escape(x.status)}</b><p>下次：{x.publish_at.astimezone(ZoneInfo(settings.timezone)).strftime('%Y-%m-%d %H:%M') if x.publish_at else '-'}</p></div></div>""" for x in rows)
         return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
-        <title>FULIFENG AUTO Garage</title><style>body{font-family:Arial;max-width:1100px;margin:30px auto;padding:0 16px}input,textarea,button{width:100%;padding:10px;margin:5px 0;box-sizing:border-box}table{width:100%;border-collapse:collapse;margin-top:25px}td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:700px){.grid{grid-template-columns:1fr}}</style></head>
+        <title>FULIFENG AUTO Garage</title><style>body{font-family:Arial;max-width:1100px;margin:30px auto;padding:0 16px}input,textarea,button{width:100%;padding:10px;margin:5px 0;box-sizing:border-box}table{width:100%;border-collapse:collapse;margin-top:25px}.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-top:25px}.card{border:1px solid #ddd;border-radius:12px;padding:12px}.cover{height:170px;background:#f3f3f3;display:flex;align-items:center;justify-content:center;font-size:50px;border-radius:8px}.cover img{width:100%;height:100%;object-fit:cover;border-radius:8px}td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:700px){.grid{grid-template-columns:1fr}}</style></head>
         <body><h1>FULIFENG AUTO 车辆车库</h1><p>车辆资料录入 · 关键参数 · 投放时间</p><form method='get' action='/garage'><div class='grid'><input name='q' placeholder='搜索车型 / 编号'><select name='status'><option value=''>全部状态</option><option value='available'>在售</option><option value='reserved'>已预订</option><option value='sold'>已售</option></select></div><button type='submit'>搜索 / 筛选</button></form>
         <form method="post" action="/garage/add"><div class="grid">
         <input name="model" required placeholder="品牌 / 车型，例如 Audi Q3"><input name="year" placeholder="年份，例如 2022">
@@ -82,7 +82,7 @@ def create_app(settings=None):
         <label><input type="checkbox" name="auto_publish" value="1" style="width:auto"> 开启自动投放</label>
         </div><textarea name="details" rows="4" placeholder="发动机、驱动、颜色、配置亮点、备注等关键参数"></textarea>
         <button type="submit">保存到车库</button></form>
-        <table><tr><th>编号</th><th>车辆信息</th><th>状态</th><th>下次投放</th><th>自动投放</th></tr>""" + body + "</table></body></html>"
+        <div class="cards">""" + body + "</div></body></html>"
 
     @app.post('/garage/add')
     def garage_add(model: str = Form(...), year: str = Form(''), mileage: str = Form(''), condition: str = Form(''),
@@ -104,7 +104,7 @@ def create_app(settings=None):
         value = escape(x.facts, quote=True)
         caption = escape(x.caption or '', quote=True)
         photos = [p for p in (x.photo_file_ids or '').split('|') if p] or ([x.photo_file_id] if x.photo_file_id else [])
-        gallery = ''.join(f'<div style="display:inline-block;margin:6px"><img src="/garage-media/{escape(p.removeprefix("local:"))}" style="width:150px;height:110px;object-fit:cover"><form method="post" action="/garage/{x.code}/photo-delete" style="margin:0"><input type="hidden" name="photo" value="{escape(p, quote=True)}"><button>删除</button></form></div>' for p in photos if p.startswith('local:'))
+        gallery = ''.join(f'<div style="display:inline-block;margin:6px"><img src="/garage-media/{escape(p.removeprefix("local:"))}" style="width:150px;height:110px;object-fit:cover"><form method="post" action="/garage/{x.code}/photo-cover"><input type="hidden" name="photo" value="{escape(p, quote=True)}"><button>设为封面</button></form><form method="post" action="/garage/{x.code}/photo-delete"><input type="hidden" name="photo" value="{escape(p, quote=True)}"><button>删除</button></form></div>' for p in photos if p.startswith('local:'))
         history = app.state.db.vehicle_publications(x.code)
         history_html = ''.join(f'<tr><td>{h.created_at:%Y-%m-%d %H:%M}</td><td>{escape(h.mode)}</td><td>{escape(h.status)}</td><td>{h.message_id or "-"}</td></tr>' for h in history)
         return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{x.code}</title>
@@ -118,7 +118,7 @@ def create_app(settings=None):
         <label><input type="checkbox" name="auto_publish" value="1" style="width:auto"> 开启自动投放</label>
         <label>车辆图片（可多选，第一张作为封面）</label><input type="file" name="photos" multiple accept="image/jpeg,image/png,image/webp">
         <label>车辆状态</label><select name="status"><option value="available">在售</option><option value="reserved">已预订</option><option value="sold">已售</option></select>
-        <button type="submit">保存修改</button></form><form method="post" action="/garage/{x.code}/publish-now"><button type="submit">立即发布到 Telegram</button></form><form method="post" action="/garage/{x.code}/generate-copy"><button type="submit">AI生成/重写俄语文案</button></form></body></html>"""
+        <button type="submit">保存修改</button></form><form method="post" action="/garage/{x.code}/duplicate"><button type="submit">复制车辆</button></form><form method="post" action="/garage/{x.code}/promotion"><input type="hidden" name="enabled" value="0"><button type="submit">停止推广</button></form><form method="post" action="/garage/{x.code}/promotion"><input type="hidden" name="enabled" value="1"><button type="submit">恢复推广</button></form><form method="post" action="/garage/{x.code}/publish-now"><button type="submit">立即发布到 Telegram</button></form><form method="post" action="/garage/{x.code}/generate-copy"><button type="submit">AI生成/重写俄语文案</button></form></body></html>"""
 
     @app.post('/garage/{code}/edit')
     async def garage_vehicle_edit(code: str, facts: str = Form(...), caption: str = Form(''), publish_at: str = Form(''),
@@ -191,6 +191,29 @@ def create_app(settings=None):
         except Exception as exc:
             logging.getLogger(__name__).exception('Garage immediate publish failed: %s', type(exc).__name__)
             return HTMLResponse('发布失败：' + escape(type(exc).__name__), status_code=502)
+        return RedirectResponse('/garage/' + code, status_code=303)
+
+    @app.post('/garage/{code}/duplicate')
+    def garage_duplicate(code: str, _=Depends(garage_auth)):
+        new_code = app.state.db.duplicate_vehicle(code)
+        if not new_code: return HTMLResponse('车辆不存在', status_code=404)
+        return RedirectResponse('/garage/' + new_code, status_code=303)
+
+    @app.post('/garage/{code}/promotion')
+    def garage_promotion(code: str, enabled: str = Form('0'), _=Depends(garage_auth)):
+        x = app.state.db.vehicle(code)
+        if not x: return HTMLResponse('车辆不存在', status_code=404)
+        app.state.db.update_vehicle(code, auto_publish=(enabled == '1' and x.status == 'available'))
+        return RedirectResponse('/garage/' + code, status_code=303)
+
+    @app.post('/garage/{code}/photo-cover')
+    def garage_photo_cover(code: str, photo: str = Form(...), _=Depends(garage_auth)):
+        x = app.state.db.vehicle(code)
+        if not x: return HTMLResponse('车辆不存在', status_code=404)
+        photos = [p for p in (x.photo_file_ids or '').split('|') if p] or ([x.photo_file_id] if x.photo_file_id else [])
+        if photo in photos:
+            photos = [photo] + [p for p in photos if p != photo]
+            app.state.db.set_vehicle_photos(code, photos)
         return RedirectResponse('/garage/' + code, status_code=303)
 
     @app.post('/garage/{code}/photo-delete')
