@@ -211,15 +211,15 @@ class BotService:
         user, msg = update.effective_user, update.effective_message
         if not user or user.is_bot or not msg:
             return
-        if user.id in self.settings.admin_ids:
-            sent = await context.bot.send_message(
-                chat_id=update.effective_chat.id,
-                text='Сообщение получено. Бот работает. Напишите /start для меню.'
-            )
-            log.info('Admin message reply sent: chat_id=%s; message_id=%s', update.effective_chat.id, sent.message_id)
-            return
-        score, grade, reasons, optout = classify(msg.text)
-        grade = self.db.record_lead(user.id, user.username, msg.text, score, grade, reasons, optout)
-        # D is recorded only: no reply, notification or proactive outreach.
-        if grade != 'D':
-            await msg.reply_text('Спасибо! Запрос сохранён. Для уточнения укажите модель, бюджет и город доставки.')
+        admin = user.id in self.settings.admin_ids
+        if not admin:
+            score, grade, reasons, optout = classify(msg.text)
+            grade = self.db.record_lead(user.id, user.username, msg.text, score, grade, reasons, optout)
+            # D is recorded only: no reply, notification or proactive outreach.
+            if grade == 'D':
+                return
+        stock = self.db.catalog('stock', self.settings.stock_text)
+        prices = self.db.catalog('price', self.settings.price_text)
+        reply = await self.content.sales_reply(msg.text, stock, prices)
+        sent = await context.bot.send_message(chat_id=update.effective_chat.id, text=reply)
+        log.info('AI sales reply sent: chat_id=%s; admin=%s; message_id=%s', update.effective_chat.id, admin, sent.message_id)
