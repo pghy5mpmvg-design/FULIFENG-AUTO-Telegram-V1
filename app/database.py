@@ -161,6 +161,26 @@ class Database:
             if row:
                 row.telegram_message_id, row.updated_at = message_id, now()
 
+    def duplicate_vehicle(self, code):
+        with self.session.begin() as s:
+            src = s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
+            if not src:
+                return None
+            row = Vehicle(facts=src.facts, caption=src.caption, photo_file_id=src.photo_file_id,
+                          photo_file_ids=src.photo_file_ids, status='available', repeat_rule='once',
+                          auto_publish=False)
+            s.add(row); s.flush(); row.code = f'FF-{row.id:05d}'
+            return row.code
+
+    def set_vehicle_photos(self, code, photos):
+        with self.session.begin() as s:
+            row = s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
+            if not row: return False
+            row.photo_file_ids = '|'.join(photos)
+            row.photo_file_id = photos[0] if photos else ''
+            row.updated_at = now()
+            return True
+
     def due_vehicles(self, at=None, limit=20):
         at = at or now()
         with self.session() as s:
