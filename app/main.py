@@ -66,12 +66,14 @@ def create_app(settings=None):
 
 
     @app.get('/garage', response_class=HTMLResponse)
-    def garage(_=Depends(garage_auth)):
+    def garage(q: str = '', status: str = '', _=Depends(garage_auth)):
         rows = app.state.db.vehicles(100)
+        if q: rows = [x for x in rows if q.lower() in x.facts.lower() or q.lower() in (x.code or '').lower()]
+        if status: rows = [x for x in rows if x.status == status]
         body = ''.join(f"<tr><td><a href="/garage/{x.code}">{escape(x.code or '')}</a></td><td>{escape(x.facts)}</td><td>{escape(x.status)}</td><td>{x.publish_at.astimezone(ZoneInfo(settings.timezone)).strftime('%Y-%m-%d %H:%M') if x.publish_at else '-'}</td><td>{'开启' if x.auto_publish else '关闭'} / {escape(x.repeat_rule)}</td></tr>" for x in rows)
         return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
         <title>FULIFENG AUTO Garage</title><style>body{font-family:Arial;max-width:1100px;margin:30px auto;padding:0 16px}input,textarea,button{width:100%;padding:10px;margin:5px 0;box-sizing:border-box}table{width:100%;border-collapse:collapse;margin-top:25px}td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:700px){.grid{grid-template-columns:1fr}}</style></head>
-        <body><h1>FULIFENG AUTO 车辆车库</h1><p>车辆资料录入 · 关键参数 · 投放时间</p>
+        <body><h1>FULIFENG AUTO 车辆车库</h1><p>车辆资料录入 · 关键参数 · 投放时间</p><form method='get' action='/garage'><div class='grid'><input name='q' placeholder='搜索车型 / 编号'><select name='status'><option value=''>全部状态</option><option value='available'>在售</option><option value='reserved'>已预订</option><option value='sold'>已售</option></select></div><button type='submit'>搜索 / 筛选</button></form>
         <form method="post" action="/garage/add"><div class="grid">
         <input name="model" required placeholder="品牌 / 车型，例如 Audi Q3"><input name="year" placeholder="年份，例如 2022">
         <input name="mileage" placeholder="里程，例如 40000 km"><input name="condition" placeholder="车况，例如 原始油漆">
@@ -103,7 +105,7 @@ def create_app(settings=None):
         caption = escape(x.caption or '', quote=True)
         return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{x.code}</title>
         <style>body{{font-family:Arial;max-width:850px;margin:30px auto;padding:0 16px}}input,textarea,select,button{{width:100%;padding:10px;margin:6px 0;box-sizing:border-box}}</style></head><body>
-        <a href="/garage">← 返回车库</a><h1>{x.code}</h1>
+        <a href="/garage">← 返回车库</a><h1>{x.code}</h1><p>状态：{escape(x.status)}</p>
         <form method="post" action="/garage/{x.code}/edit" enctype="multipart/form-data">
         <label>车辆关键参数</label><textarea name="facts" rows="7">{value}</textarea>
         <label>俄语发布文案</label><textarea name="caption" rows="9">{caption}</textarea>
@@ -112,7 +114,7 @@ def create_app(settings=None):
         <label><input type="checkbox" name="auto_publish" value="1" style="width:auto"> 开启自动投放</label>
         <label>车辆图片（可多选，第一张作为封面）</label><input type="file" name="photos" multiple accept="image/jpeg,image/png,image/webp">
         <label>车辆状态</label><select name="status"><option value="available">在售</option><option value="reserved">已预订</option><option value="sold">已售</option></select>
-        <button type="submit">保存修改</button></form></body></html>"""
+        <button type="submit">保存修改</button></form><form method="post" action="/garage/{x.code}/publish-now"><button type="submit">立即发布到 Telegram</button></form><form method="post" action="/garage/{x.code}/generate-copy"><button type="submit">AI生成/重写俄语文案</button></form></body></html>"""
 
     @app.post('/garage/{code}/edit')
     async def garage_vehicle_edit(code: str, facts: str = Form(...), caption: str = Form(''), publish_at: str = Form(''),
@@ -145,6 +147,45 @@ def create_app(settings=None):
             app.state.db.update_vehicle_status(code, status)
         if not ok:
             return HTMLResponse('车辆不存在', status_code=404)
+        return RedirectResponse('/garage/' + code, status_code=303)
+
+    @app.post('/garage/{code}/generate-copy')
+    async def garage_generate_copy(code: str, _=Depends(garage_auth)):
+        x = app.state.db.vehicle(code)
+        if not x:
+            return HTMLResponse('车辆不存在', status_code=404)
+        caption = await app.state.service.content.sales_listing(x.facts)
+        app.state.db.update_vehicle(code, caption=caption)
+        return RedirectResponse('/garage/' + code, status_code=303)
+
+    @app.post('/garage/{code}/publish-now')
+    async def garage_publish_now(code: str, _=Depends(garage_auth)):
+        x = app.state.db.vehicle(code)
+        if not x:
+            return HTMLResponse('车辆不存在', status_code=404)
+        if x.status != 'available':
+            return HTMLResponse('只有在售车辆可以发布', status_code=400)
+        target = app.state.db.get('target_chat')
+        if not target:
+            return HTMLResponse('请先在 Telegram 设置目标频道 /setchat', status_code=400)
+        caption = x.caption.strip() if x.caption else await app.state.service.content.sales_listing(x.facts)
+        photos = [p for p in (x.photo_file_ids or '').split('|') if p] or ([x.photo_file_id] if x.photo_file_id else [])
+        def media_value(p):
+            return media_dir / p.removeprefix('local:') if p.startswith('local:') else p
+        try:
+            if len(photos) > 1:
+                from telegram import InputMediaPhoto
+                media = [InputMediaPhoto(media=media_value(p), caption=caption[:1024] if i == 0 else None) for i,p in enumerate(photos[:10])]
+                sent_group = await app.state.service.application.bot.send_media_group(chat_id=target, media=media)
+                sent = sent_group[0]
+            elif photos:
+                sent = await app.state.service.application.bot.send_photo(chat_id=target, photo=media_value(photos[0]), caption=caption[:1024])
+            else:
+                sent = await app.state.service.application.bot.send_message(chat_id=target, text=caption[:4096])
+            app.state.db.mark_vehicle_published(code, sent.message_id)
+        except Exception as exc:
+            logging.getLogger(__name__).exception('Garage immediate publish failed: %s', type(exc).__name__)
+            return HTMLResponse('发布失败：' + escape(type(exc).__name__), status_code=502)
         return RedirectResponse('/garage/' + code, status_code=303)
 
     @app.get('/garage-media/{filename}')
