@@ -65,6 +65,15 @@ def create_app(settings=None):
         return credentials.username
 
 
+    @app.get('/crm', response_class=HTMLResponse)
+    def crm(_=Depends(garage_auth)):
+        rows = app.state.db.leads()
+        body = ''.join(f'<tr><td>{x.grade}</td><td>{escape(x.first_name or "-")}</td><td>@{escape(x.username or "-")}</td><td>{escape(x.vehicle_code or "-")}</td><td>{escape(x.last_message[:160])}</td><td>{x.updated_at:%Y-%m-%d %H:%M}</td></tr>' for x in rows)
+        return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>FULIFENG CRM</title>
+        <style>body{{font-family:Arial;max-width:1150px;margin:30px auto;padding:0 16px}}table{{width:100%;border-collapse:collapse}}td,th{{padding:9px;border-bottom:1px solid #ddd;text-align:left}}</style></head>
+        <body><h1>FULIFENG AUTO 客户线索 CRM</h1><p><a href="/garage-dashboard">← 运营控制台</a></p>
+        <table><tr><th>等级</th><th>客户</th><th>Telegram</th><th>咨询车辆</th><th>最近消息</th><th>更新时间</th></tr>{body}</table></body></html>"""
+
     @app.get('/garage-dashboard', response_class=HTMLResponse)
     def garage_dashboard(_=Depends(garage_auth)):
         s = app.state.db.garage_stats()
@@ -76,7 +85,7 @@ def create_app(settings=None):
         bot_ok = bool(app.state.service.polling_ok)
         return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>FULIFENG AUTO 运营控制台</title>
         <style>body{{font-family:Arial;max-width:1100px;margin:30px auto;padding:0 16px}}.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}}.box{{padding:18px;border:1px solid #ddd;border-radius:12px}}.n{{font-size:30px;font-weight:bold}}table{{width:100%;border-collapse:collapse;margin-top:20px}}td,th{{padding:9px;border-bottom:1px solid #ddd;text-align:left}}a{{text-decoration:none}}</style></head><body>
-        <h1>FULIFENG AUTO 运营控制台</h1><p><a href="/garage">→ 进入车辆车库</a></p><div class="stats">
+        <h1>FULIFENG AUTO 运营控制台</h1><p><a href="/garage">→ 进入车辆车库</a>　<a href="/crm">→ 客户线索 CRM</a></p><div class="stats">
         <div class="box">总库存<div class="n">{s['total']}</div></div><div class="box">在售<div class="n">{s['available']}</div></div>
         <div class="box">已预订<div class="n">{s['reserved']}</div></div><div class="box">已售<div class="n">{s['sold']}</div></div>
         <div class="box">自动推广<div class="n">{s['auto']}</div></div><div class="box">等待投放<div class="n">{s['due']}</div></div>
