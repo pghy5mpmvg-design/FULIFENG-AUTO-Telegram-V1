@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.exc import IntegrityError
-from telegram import BotCommand, Update
+from telegram import BotCommand, Update, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 from .content import ContentGenerator
@@ -106,11 +106,15 @@ class BotService:
                 caption = vehicle.caption.strip() if vehicle.caption else ''
                 if not caption:
                     caption = await self.content.sales_listing(vehicle.facts)
-                if vehicle.photo_file_id:
-                    photo = vehicle.photo_file_id
-                    if photo.startswith('local:'):
-                        photo = Path('/app/data/garage_media') / photo.removeprefix('local:')
-                    sent = await self.application.bot.send_photo(chat_id=target, photo=photo, caption=caption[:1024])
+                photos = [p for p in (vehicle.photo_file_ids or '').split('|') if p] or ([vehicle.photo_file_id] if vehicle.photo_file_id else [])
+                def media_value(p):
+                    return Path('/app/data/garage_media') / p.removeprefix('local:') if p.startswith('local:') else p
+                if len(photos) > 1:
+                    media = [InputMediaPhoto(media=media_value(p), caption=caption[:1024] if i == 0 else None) for i, p in enumerate(photos[:10])]
+                    sent_group = await self.application.bot.send_media_group(chat_id=target, media=media)
+                    sent = sent_group[0]
+                elif photos:
+                    sent = await self.application.bot.send_photo(chat_id=target, photo=media_value(photos[0]), caption=caption[:1024])
                 else:
                     sent = await self.application.bot.send_message(chat_id=target, text=caption[:4096])
                 self.db.mark_vehicle_published(vehicle.code, sent.message_id)
