@@ -333,6 +333,7 @@ class BotService:
                 return
             match = re.search(r'\\bFF[- ]?(\\d{1,6})\\b', msg.text or '', re.I)
             vehicle_code = ('FF-' + match.group(1).zfill(5)) if match else ''
+            self.db.record_lead_message(user.id, 'in', msg.text or '')
             crm_grade = self.db.upsert_lead(user.id, user.username or '', user.first_name or '',
                                             user.language_code or '', vehicle_code, msg.text or '')
             if crm_grade == 'A' and self.settings.admin_ids:
@@ -351,4 +352,6 @@ class BotService:
                 stock = vehicle_code + ': ' + vehicle.facts + '\\n' + stock
         reply = await self.content.sales_reply(msg.text, stock, prices)
         sent = await context.bot.send_message(chat_id=update.effective_chat.id, text=reply)
+        if not admin:
+            self.db.record_lead_message(user.id, 'out', reply)
         log.info('AI sales reply sent: chat_id=%s; admin=%s; message_id=%s', update.effective_chat.id, admin, sent.message_id)
