@@ -150,7 +150,7 @@ class BotService:
                 lead = s.get(Lead, user.id)
                 if lead:
                     lead.opted_out = False
-            await msg.reply_text('Добро пожаловать в FULIFENG AUTO! Укажите модель, бюджет и город доставки. Запрос сохраняется для обработки. Для отказа напишите «не пишите». /help')
+            sent = await context.bot.send_message(chat_id=update.effective_chat.id, text='Добро пожаловать в FULIFENG AUTO!\n\n🚗 Новый автомобиль\n🚙 Б/У автомобиль\n🔥 Подбор по бюджету\n📩 Связаться с менеджером\n\nУкажите модель, бюджет и город доставки.')\n            log.info('Start reply sent: chat_id=%s; message_id=%s', update.effective_chat.id, sent.message_id)
         elif name == 'help':
             await msg.reply_text('/start /help /stock /price\nАдминистратор: /today /post [send] /setchat @channel /pause /resume /stats\nВаш Telegram ID: ' + str(user.id))
         elif name in ('stock', 'price'):
