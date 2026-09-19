@@ -118,6 +118,7 @@ class BotService:
                 else:
                     sent = await self.application.bot.send_message(chat_id=target, text=caption[:4096])
                 self.db.mark_vehicle_published(vehicle.code, sent.message_id)
+                self.db.record_vehicle_publication(vehicle.code, target, sent.message_id, caption, mode='scheduled')
                 self.db.advance_vehicle_schedule(vehicle.code)
                 log.info('Scheduled vehicle published: code=%s; chat_id=%s; message_id=%s', vehicle.code, target, sent.message_id)
             except Exception as exc:
