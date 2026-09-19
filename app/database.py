@@ -25,10 +25,27 @@ class Lead(Base):
     username: Mapped[str] = mapped_column(String(200), default='')
     latest_message: Mapped[str] = mapped_column(Text, default='')
     score: Mapped[int] = mapped_column(Integer, default=0)
-    grade: Mapped[str] = mapped_column(String(2), default='D')
+    grade: Mapped[str] = mapped_column(String(10), default='C')
     reasons: Mapped[str] = mapped_column(Text, default='')
     opted_out: Mapped[bool] = mapped_column(Boolean, default=False)
+    first_name: Mapped[str] = mapped_column(String(200), default='')
+    language_code: Mapped[str] = mapped_column(String(30), default='')
+    vehicle_code: Mapped[str] = mapped_column(String(40), default='')
+    last_message: Mapped[str] = mapped_column(Text, default='')
+    status: Mapped[str] = mapped_column(String(30), default='new')
+    budget: Mapped[str] = mapped_column(String(100), default='')
+    city: Mapped[str] = mapped_column(String(150), default='')
+    vehicle_preference: Mapped[str] = mapped_column(String(30), default='')
+    purchase_timing: Mapped[str] = mapped_column(String(100), default='')
+    manager_note: Mapped[str] = mapped_column(Text, default='')
+    next_follow_up: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+    @property
+    def id(self): return self.user_id
+    @property
+    def telegram_user_id(self): return self.user_id
 
 
 class Publication(Base):
@@ -90,27 +107,6 @@ class VehicleDetail(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
-class Lead(Base):
-    __tablename__ = 'leads'
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
-    username: Mapped[str] = mapped_column(String(200), default='')
-    first_name: Mapped[str] = mapped_column(String(200), default='')
-    language_code: Mapped[str] = mapped_column(String(30), default='')
-    vehicle_code: Mapped[str] = mapped_column(String(40), default='', index=True)
-    grade: Mapped[str] = mapped_column(String(10), default='C')
-    last_message: Mapped[str] = mapped_column(Text, default='')
-    status: Mapped[str] = mapped_column(String(30), default='new')
-    budget: Mapped[str] = mapped_column(String(100), default='')
-    city: Mapped[str] = mapped_column(String(150), default='')
-    vehicle_preference: Mapped[str] = mapped_column(String(30), default='')
-    purchase_timing: Mapped[str] = mapped_column(String(100), default='')
-    manager_note: Mapped[str] = mapped_column(Text, default='')
-    next_follow_up: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
-
-
 class LeadMessage(Base):
     __tablename__ = 'lead_messages'
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -139,6 +135,29 @@ class Database:
 
     def initialize(self, target_chat=''):
         Base.metadata.create_all(self.engine)
+        # Lightweight SQLite migrations for existing persistent Railway volume.
+        if self.engine.dialect.name == 'sqlite':
+            from sqlalchemy import text
+            migrations = {
+                'vehicles': {
+                    'photo_file_ids': "TEXT DEFAULT ''", 'publish_at': 'DATETIME',
+                    'repeat_rule': "VARCHAR(20) DEFAULT 'once'", 'auto_publish': 'BOOLEAN DEFAULT 0'
+                },
+                'leads': {
+                    'first_name': "VARCHAR(200) DEFAULT ''", 'language_code': "VARCHAR(30) DEFAULT ''",
+                    'vehicle_code': "VARCHAR(40) DEFAULT ''", 'last_message': "TEXT DEFAULT ''",
+                    'status': "VARCHAR(30) DEFAULT 'new'", 'budget': "VARCHAR(100) DEFAULT ''",
+                    'city': "VARCHAR(150) DEFAULT ''", 'vehicle_preference': "VARCHAR(30) DEFAULT ''",
+                    'purchase_timing': "VARCHAR(100) DEFAULT ''", 'manager_note': "TEXT DEFAULT ''",
+                    'next_follow_up': 'DATETIME', 'created_at': 'DATETIME'
+                }
+            }
+            with self.engine.begin() as conn:
+                for table, cols in migrations.items():
+                    existing = {r[1] for r in conn.execute(text(f'PRAGMA table_info({table})'))}
+                    for name, ddl in cols.items():
+                        if name not in existing:
+                            conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {ddl}'))
         with self.session.begin() as s:
             for key, value in [('paused', 'true'), ('target_chat', target_chat)]:
                 if s.get(Setting, key) is None:
@@ -301,9 +320,9 @@ class Database:
 
     def upsert_lead(self, telegram_user_id, username='', first_name='', language_code='', vehicle_code='', last_message=''):
         with self.session.begin() as s:
-            row = s.scalar(select(Lead).where(Lead.telegram_user_id == telegram_user_id))
+            row = s.scalar(select(Lead).where(Lead.user_id == telegram_user_id))
             if row is None:
-                row = Lead(telegram_user_id=telegram_user_id)
+                row = Lead(user_id=telegram_user_id)
                 s.add(row)
             row.username = username or row.username
             row.first_name = first_name or row.first_name
