@@ -8,8 +8,9 @@ from html import escape
 from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Form, UploadFile, File, Request, HTTPException
+from fastapi import FastAPI, Form, UploadFile, File, Request, HTTPException, Depends
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, FileResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from sqlalchemy import text
 
 from .config import Settings
@@ -54,10 +55,18 @@ def create_app(settings=None):
     app = FastAPI(title='FULIFENG AUTO Telegram V1', lifespan=lifespan, docs_url=None, redoc_url=None)
     media_dir = Path('/app/data/garage_media') if os.getenv('RAILWAY_SERVICE_ID') else Path('./data/garage_media')
     media_dir.mkdir(parents=True, exist_ok=True)
+    security = HTTPBasic()
+    garage_user = os.getenv('GARAGE_USER', 'admin')
+    garage_password = os.getenv('GARAGE_PASSWORD', '')
+    def garage_auth(credentials: HTTPBasicCredentials = Depends(security)):
+        valid = bool(garage_password) and secrets.compare_digest(credentials.username, garage_user) and secrets.compare_digest(credentials.password, garage_password)
+        if not valid:
+            raise HTTPException(status_code=401, detail='Unauthorized', headers={'WWW-Authenticate':'Basic'})
+        return credentials.username
 
 
     @app.get('/garage', response_class=HTMLResponse)
-    def garage():
+    def garage(_=Depends(garage_auth)):
         rows = app.state.db.vehicles(100)
         body = ''.join(f"<tr><td><a href="/garage/{x.code}">{escape(x.code or '')}</a></td><td>{escape(x.facts)}</td><td>{escape(x.status)}</td><td>{x.publish_at.astimezone(ZoneInfo(settings.timezone)).strftime('%Y-%m-%d %H:%M') if x.publish_at else '-'}</td><td>{'开启' if x.auto_publish else '关闭'} / {escape(x.repeat_rule)}</td></tr>" for x in rows)
         return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
@@ -76,7 +85,7 @@ def create_app(settings=None):
     @app.post('/garage/add')
     def garage_add(model: str = Form(...), year: str = Form(''), mileage: str = Form(''), condition: str = Form(''),
                    price: str = Form(''), publish_at: str = Form(''), repeat_rule: str = Form('once'),
-                   auto_publish: str = Form(''), details: str = Form('')):
+                   auto_publish: str = Form(''), details: str = Form(''), _=Depends(garage_auth)):
         facts = ' | '.join(x for x in [model, year, mileage, condition, ('价格: ' + price) if price else '', details] if x.strip())
         scheduled = None
         if publish_at:
@@ -86,7 +95,7 @@ def create_app(settings=None):
         return RedirectResponse('/garage', status_code=303)
 
     @app.get('/garage/{code}', response_class=HTMLResponse)
-    def garage_vehicle(code: str):
+    def garage_vehicle(code: str, _=Depends(garage_auth)):
         x = app.state.db.vehicle(code)
         if not x:
             return HTMLResponse('车辆不存在', status_code=404)
@@ -101,35 +110,45 @@ def create_app(settings=None):
         <label>投放时间</label><input type="datetime-local" name="publish_at">
         <label>投放周期</label><select name="repeat_rule"><option value="once">仅一次</option><option value="daily">每天</option><option value="weekly">每周</option></select>
         <label><input type="checkbox" name="auto_publish" value="1" style="width:auto"> 开启自动投放</label>
-        <label>车辆主图</label><input type="file" name="photo" accept="image/jpeg,image/png,image/webp">
+        <label>车辆图片（可多选，第一张作为封面）</label><input type="file" name="photos" multiple accept="image/jpeg,image/png,image/webp">
+        <label>车辆状态</label><select name="status"><option value="available">在售</option><option value="reserved">已预订</option><option value="sold">已售</option></select>
         <button type="submit">保存修改</button></form></body></html>"""
 
     @app.post('/garage/{code}/edit')
     async def garage_vehicle_edit(code: str, facts: str = Form(...), caption: str = Form(''), publish_at: str = Form(''),
-                                  repeat_rule: str = Form('once'), auto_publish: str = Form(''), photo: UploadFile | None = File(None)):
+                                  repeat_rule: str = Form('once'), auto_publish: str = Form(''), status: str = Form('available'), photos: list[UploadFile] = File(default=[]), _=Depends(garage_auth)):
         scheduled = None
         if publish_at:
             local_dt = datetime.fromisoformat(publish_at).replace(tzinfo=ZoneInfo(settings.timezone))
             scheduled = local_dt.astimezone(ZoneInfo('UTC'))
-        photo_file_id = None
-        if photo and photo.filename:
+        stored = []
+        for photo in photos[:10]:
+            if not photo.filename:
+                continue
             data = await photo.read()
             if len(data) > 10 * 1024 * 1024:
-                return HTMLResponse('图片不能超过10MB', status_code=400)
+                return HTMLResponse('单张图片不能超过10MB', status_code=400)
             suffix = Path(photo.filename).suffix.lower()
             if suffix not in ('.jpg', '.jpeg', '.png', '.webp'):
                 return HTMLResponse('仅支持 JPG/PNG/WEBP', status_code=400)
             filename = f'{code}-{uuid.uuid4().hex}{suffix}'
             (media_dir / filename).write_bytes(data)
-            photo_file_id = 'local:' + filename
-        ok = app.state.db.update_vehicle(code, facts=facts, caption=caption, photo_file_id=photo_file_id,
-                                         publish_at=scheduled, repeat_rule=repeat_rule, auto_publish=auto_publish == '1')
+            stored.append('local:' + filename)
+        x = app.state.db.vehicle(code)
+        existing = [p for p in (x.photo_file_ids or '').split('|') if p] if x else []
+        all_photos = existing + stored
+        cover = all_photos[0] if all_photos else None
+        ok = app.state.db.update_vehicle(code, facts=facts, caption=caption, photo_file_id=cover,
+                                         photo_file_ids='|'.join(all_photos), publish_at=scheduled,
+                                         repeat_rule=repeat_rule, auto_publish=(auto_publish == '1' and status == 'available'))
+        if status in ('available','reserved','sold'):
+            app.state.db.update_vehicle_status(code, status)
         if not ok:
             return HTMLResponse('车辆不存在', status_code=404)
         return RedirectResponse('/garage/' + code, status_code=303)
 
     @app.get('/garage-media/{filename}')
-    def garage_media(filename: str):
+    def garage_media(filename: str, _=Depends(garage_auth)):
         safe = Path(filename).name
         path = media_dir / safe
         if not path.exists():
