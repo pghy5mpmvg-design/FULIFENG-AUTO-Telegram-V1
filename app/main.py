@@ -134,11 +134,14 @@ def create_app(settings=None):
                 return HTMLResponse('跟进时间格式错误', status_code=400)
         if not app.state.db.update_lead(lead_id, grade, status, budget, city, vehicle_preference, purchase_timing, manager_note, follow):
             return HTMLResponse('客户不存在', status_code=404)
+        app.state.db.recalculate_lead_grade(lead_id)
         return RedirectResponse('/crm/' + str(lead_id), status_code=303)
 
     @app.get('/garage-dashboard', response_class=HTMLResponse)
     def garage_dashboard(_=Depends(garage_auth)):
         s = app.state.db.garage_stats()
+        intervention = app.state.db.intervention_leads()
+        intervention_html = ''.join(f'<tr><td><b>{x.grade}</b></td><td><a href="/crm/{x.id}">{escape(x.first_name or x.username or str(x.telegram_user_id))}</a></td><td>{escape(x.vehicle_code or "-")}</td><td>{escape(x.budget or "-")}</td><td>{escape(x.city or "-")}</td><td>{escape(x.last_message[:120])}</td></tr>' for x in intervention)
         upcoming = app.state.db.upcoming_vehicles()
         failures = app.state.db.failed_vehicle_publications()
         recent = ''.join(f'<tr><td>{escape(p.vehicle_code)}</td><td>{p.created_at:%Y-%m-%d %H:%M}</td><td>{escape(p.mode)}</td><td>{escape(p.status)}</td><td>{p.message_id or "-"}</td></tr>' for p in s['recent'])
@@ -152,7 +155,7 @@ def create_app(settings=None):
         <div class="box">已预订<div class="n">{s['reserved']}</div></div><div class="box">已售<div class="n">{s['sold']}</div></div>
         <div class="box">自动推广<div class="n">{s['auto']}</div></div><div class="box">等待投放<div class="n">{s['due']}</div></div>
         <div class="box">今日已发布<div class="n">{s['sent_today']}</div></div></div>
-        <h2>系统状态</h2><p>Telegram Bot：<b>{"运行中" if bot_ok else "未运行/启动中"}</b>　调度器：<b>{"运行中" if app.state.service.scheduler.running else "未运行"}</b>　时区：{escape(settings.timezone)}</p><h2>下一批投放计划</h2><table><tr><th>车辆</th><th>信息</th><th>时间</th><th>周期</th></tr>{upcoming_html}</table><h2>失败任务</h2><table><tr><th>车辆</th><th>时间</th><th>错误</th></tr>{failed_html or "<tr><td colspan=3>暂无失败任务</td></tr>"}</table><h2>最近发布记录</h2><table><tr><th>车辆</th><th>时间</th><th>方式</th><th>状态</th><th>Telegram ID</th></tr>{recent}</table></body></html>"""
+        <h2>🔥 需要人工立即介入</h2><table><tr><th>等级</th><th>客户</th><th>车辆</th><th>预算</th><th>城市</th><th>最近消息</th></tr>{intervention_html or "<tr><td colspan=6>暂无 A+/A 高意向客户</td></tr>"}</table><h2>系统状态</h2><p>Telegram Bot：<b>{"运行中" if bot_ok else "未运行/启动中"}</b>　调度器：<b>{"运行中" if app.state.service.scheduler.running else "未运行"}</b>　时区：{escape(settings.timezone)}</p><h2>下一批投放计划</h2><table><tr><th>车辆</th><th>信息</th><th>时间</th><th>周期</th></tr>{upcoming_html}</table><h2>失败任务</h2><table><tr><th>车辆</th><th>时间</th><th>错误</th></tr>{failed_html or "<tr><td colspan=3>暂无失败任务</td></tr>"}</table><h2>最近发布记录</h2><table><tr><th>车辆</th><th>时间</th><th>方式</th><th>状态</th><th>Telegram ID</th></tr>{recent}</table></body></html>"""
 
     @app.get('/garage', response_class=HTMLResponse)
     def garage(q: str = '', status: str = '', _=Depends(garage_auth)):
