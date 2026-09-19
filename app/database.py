@@ -41,6 +41,19 @@ class Publication(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class Vehicle(Base):
+    __tablename__ = 'vehicles'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(40), unique=True, index=True, nullable=True)
+    facts: Mapped[str] = mapped_column(Text)
+    caption: Mapped[str] = mapped_column(Text, default='')
+    photo_file_id: Mapped[str] = mapped_column(Text, default='')
+    status: Mapped[str] = mapped_column(String(20), default='available')
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class CommandEvent(Base):
     __tablename__ = 'command_events'
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -89,6 +102,37 @@ class Database:
             lead.score, lead.grade = (0, 'D') if lead.opted_out else (score, grade)
             lead.reasons, lead.updated_at = reasons, now()
             return lead.grade
+
+
+    def create_vehicle(self, facts, caption, photo_file_id):
+        with self.session.begin() as s:
+            row = Vehicle(facts=facts[:4000], caption=caption[:4000], photo_file_id=photo_file_id)
+            s.add(row)
+            s.flush()
+            row.code = f'FF-{row.id:05d}'
+            return row.code
+
+    def vehicle(self, code):
+        with self.session() as s:
+            return s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
+
+    def update_vehicle_status(self, code, status):
+        with self.session.begin() as s:
+            row = s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
+            if not row:
+                return False
+            row.status, row.updated_at = status, now()
+            return True
+
+    def mark_vehicle_published(self, code, message_id):
+        with self.session.begin() as s:
+            row = s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
+            if row:
+                row.telegram_message_id, row.updated_at = message_id, now()
+
+    def vehicles(self, limit=20):
+        with self.session() as s:
+            return s.scalars(select(Vehicle).order_by(Vehicle.id.desc()).limit(limit)).all()
 
     def stats(self):
         with self.session() as s:
