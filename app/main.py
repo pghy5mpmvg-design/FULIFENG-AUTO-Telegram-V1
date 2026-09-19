@@ -3,7 +3,7 @@ import os
 import uuid
 import secrets
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 from zoneinfo import ZoneInfo
 from contextlib import asynccontextmanager
@@ -68,11 +68,42 @@ def create_app(settings=None):
     @app.get('/crm', response_class=HTMLResponse)
     def crm(_=Depends(garage_auth)):
         rows = app.state.db.leads()
-        body = ''.join(f'<tr><td>{x.grade}</td><td>{escape(x.first_name or "-")}</td><td>@{escape(x.username or "-")}</td><td>{escape(x.vehicle_code or "-")}</td><td>{escape(x.last_message[:160])}</td><td>{x.updated_at:%Y-%m-%d %H:%M}</td></tr>' for x in rows)
+        body = ''.join(f'<tr><td>{x.grade}</td><td><a href="/crm/{x.id}">{escape(x.first_name or "-")}</a></td><td>@{escape(x.username or "-")}</td><td>{escape(x.vehicle_code or "-")}</td><td>{escape(x.last_message[:160])}</td><td>{x.updated_at:%Y-%m-%d %H:%M}</td></tr>' for x in rows)
         return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>FULIFENG CRM</title>
         <style>body{{font-family:Arial;max-width:1150px;margin:30px auto;padding:0 16px}}table{{width:100%;border-collapse:collapse}}td,th{{padding:9px;border-bottom:1px solid #ddd;text-align:left}}</style></head>
         <body><h1>FULIFENG AUTO 客户线索 CRM</h1><p><a href="/garage-dashboard">← 运营控制台</a></p>
         <table><tr><th>等级</th><th>客户</th><th>Telegram</th><th>咨询车辆</th><th>最近消息</th><th>更新时间</th></tr>{body}</table></body></html>"""
+
+    @app.get('/crm/{lead_id}', response_class=HTMLResponse)
+    def crm_detail(lead_id: int, _=Depends(garage_auth)):
+        x = app.state.db.lead(lead_id)
+        if not x: return HTMLResponse('客户不存在', status_code=404)
+        def ev(v): return escape(v or '', quote=True)
+        follow = x.next_follow_up.astimezone(ZoneInfo(settings.timezone)).strftime('%Y-%m-%dT%H:%M') if x.next_follow_up else ''
+        return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>CRM {lead_id}</title>
+        <style>body{{font-family:Arial;max-width:850px;margin:30px auto;padding:0 16px}}input,select,textarea{{width:100%;padding:10px;margin:6px 0;box-sizing:border-box}}button{{padding:12px 20px}}</style></head><body>
+        <p><a href="/crm">← CRM</a></p><h1>{ev(x.first_name)} @{ev(x.username)}</h1><p>Telegram ID: {x.telegram_user_id}　咨询车辆: {ev(x.vehicle_code) or "-"}</p>
+        <p>最近消息：{escape(x.last_message or "")}</p><form method="post" action="/crm/{lead_id}">
+        <label>客户等级</label><select name="grade"><option>{x.grade}</option><option>A+</option><option>A</option><option>B</option><option>C</option></select>
+        <label>销售阶段</label><select name="status"><option value="{ev(x.status)}">{ev(x.status)}</option><option value="new">新线索</option><option value="contacted">已联系</option><option value="negotiating">谈判中</option><option value="won">已成交</option><option value="lost">已流失</option></select>
+        <input name="budget" value="{ev(x.budget)}" placeholder="预算"><input name="city" value="{ev(x.city)}" placeholder="城市 / 国家">
+        <select name="vehicle_preference"><option value="{ev(x.vehicle_preference)}">{ev(x.vehicle_preference) or "新车/二手偏好"}</option><option value="new">新车</option><option value="used">二手车</option><option value="either">均可</option></select>
+        <input name="purchase_timing" value="{ev(x.purchase_timing)}" placeholder="预计购买时间"><label>下次跟进</label><input type="datetime-local" name="next_follow_up" value="{follow}">
+        <textarea name="manager_note" rows="6" placeholder="销售备注">{ev(x.manager_note)}</textarea><button type="submit">保存客户资料</button></form></body></html>"""
+
+    @app.post('/crm/{lead_id}')
+    def crm_update(lead_id: int, grade: str = Form('C'), status: str = Form('new'), budget: str = Form(''),
+                   city: str = Form(''), vehicle_preference: str = Form(''), purchase_timing: str = Form(''),
+                   next_follow_up: str = Form(''), manager_note: str = Form(''), _=Depends(garage_auth)):
+        follow = None
+        if next_follow_up:
+            try:
+                follow = datetime.fromisoformat(next_follow_up).replace(tzinfo=ZoneInfo(settings.timezone)).astimezone(timezone.utc)
+            except ValueError:
+                return HTMLResponse('跟进时间格式错误', status_code=400)
+        if not app.state.db.update_lead(lead_id, grade, status, budget, city, vehicle_preference, purchase_timing, manager_note, follow):
+            return HTMLResponse('客户不存在', status_code=404)
+        return RedirectResponse('/crm/' + str(lead_id), status_code=303)
 
     @app.get('/garage-dashboard', response_class=HTMLResponse)
     def garage_dashboard(_=Depends(garage_auth)):
