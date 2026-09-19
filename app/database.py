@@ -111,6 +111,15 @@ class Lead(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
 
 
+class LeadMessage(Base):
+    __tablename__ = 'lead_messages'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    direction: Mapped[str] = mapped_column(String(10), default='in')
+    text: Mapped[str] = mapped_column(Text, default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+
 class CommandEvent(Base):
     __tablename__ = 'command_events'
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -306,6 +315,27 @@ class Database:
             row.grade = 'A' if vehicle_code and hot else ('B' if hot or vehicle_code else 'C')
             row.updated_at = now()
             return row.grade
+
+    def record_lead_message(self, telegram_user_id, direction, text):
+        with self.session.begin() as s:
+            s.add(LeadMessage(telegram_user_id=telegram_user_id, direction=direction, text=(text or '')[:4000]))
+
+    def lead_messages(self, telegram_user_id, limit=100):
+        with self.session() as s:
+            rows = s.scalars(select(LeadMessage).where(
+                LeadMessage.telegram_user_id == telegram_user_id
+            ).order_by(LeadMessage.id.desc()).limit(limit)).all()
+            return list(reversed(rows))
+
+    def lead_funnel(self):
+        with self.session() as s:
+            rows = s.scalars(select(Lead)).all()
+            stages = {k: 0 for k in ('new','contacted','negotiating','won','lost')}
+            grades = {k: 0 for k in ('A+','A','B','C')}
+            for x in rows:
+                stages[x.status] = stages.get(x.status, 0) + 1
+                grades[x.grade] = grades.get(x.grade, 0) + 1
+            return {'total': len(rows), 'stages': stages, 'grades': grades}
 
     def lead(self, lead_id):
         with self.session() as s:
