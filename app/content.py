@@ -28,6 +28,29 @@ class ContentGenerator:
             log.warning('Content fallback: %s', type(exc).__name__)
             return fallback[:3900]
 
+    async def sales_listing(self, facts):
+        fallback = '🚘 ' + facts + '\n\nАвтомобиль из Китая. Для уточнения цены, комплектации и доставки напишите нам в личные сообщения.\n\nFULIFENG AUTO — Ваш автосалон в Китае 🇨🇳'
+        if not self.client:
+            return fallback[:1024]
+        try:
+            response = await self.client.responses.create(
+                model=self.settings.openai_model,
+                instructions=(
+                    'Write a concise natural Russian Telegram vehicle sales caption for FULIFENG AUTO. '
+                    'Use only the supplied facts. Never invent engine, trim, drivetrain, price, stock status, '
+                    'accident history, customs cost, delivery time, warranty, or equipment. '
+                    'Keep it under 850 characters. End with a call to message for price, configuration and delivery, '
+                    'then: FULIFENG AUTO — Ваш автосалон в Китае 🇨🇳'
+                ),
+                input='Confirmed vehicle facts: ' + facts,
+                max_output_tokens=350,
+                store=False,
+            )
+            return response.output_text.strip()[:1024] or fallback[:1024]
+        except Exception as exc:
+            log.warning('Vehicle listing fallback: %s', type(exc).__name__)
+            return fallback[:1024]
+
     async def sales_reply(self, text, stock='', prices=''):
         fallback = 'Спасибо! Укажите, пожалуйста, модель, бюджет и город доставки.'
         if not self.client:
