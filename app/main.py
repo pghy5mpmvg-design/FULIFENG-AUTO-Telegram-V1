@@ -317,19 +317,31 @@ def create_app(settings=None):
             return media_dir / p.removeprefix('local:') if p.startswith('local:') else p
         try:
             if len(photos) > 1:
-                from telegram import InputMediaPhoto, InputFile
-                def album_media(p):
-                    v = media_value(p)
-                    return InputFile(v.open('rb'), filename=v.name) if isinstance(v, Path) else v
-                media = [InputMediaPhoto(media=album_media(p), caption=caption[:1024] if i == 0 else None) for i,p in enumerate(photos[:10])]
-                sent_group = await app.state.service.application.bot.send_media_group(chat_id=target, media=media)
-                sent = sent_group[0]
+                # Pass open file objects directly. python-telegram-bot then builds
+                # attach:// multipart references correctly for media groups.
+                from telegram import InputMediaPhoto
+                handles = []
+                try:
+                    media = []
+                    for i, p in enumerate(photos[:10]):
+                        v = media_value(p)
+                        if isinstance(v, Path):
+                            fh = v.open('rb')
+                            handles.append(fh)
+                            v = fh
+                        media.append(InputMediaPhoto(media=v, caption=caption[:1024] if i == 0 else None))
+                    sent_group = await app.state.service.application.bot.send_media_group(chat_id=target, media=media)
+                    sent = sent_group[0]
+                finally:
+                    for fh in handles:
+                        fh.close()
             elif photos:
                 v = media_value(photos[0])
                 if isinstance(v, Path):
-                    from telegram import InputFile
-                    v = InputFile(v.open('rb'), filename=v.name)
-                sent = await app.state.service.application.bot.send_photo(chat_id=target, photo=v, caption=caption[:1024])
+                    with v.open('rb') as fh:
+                        sent = await app.state.service.application.bot.send_photo(chat_id=target, photo=fh, caption=caption[:1024])
+                else:
+                    sent = await app.state.service.application.bot.send_photo(chat_id=target, photo=v, caption=caption[:1024])
             else:
                 sent = await app.state.service.application.bot.send_message(chat_id=target, text=caption[:4096])
             app.state.db.mark_vehicle_published(code, sent.message_id)
