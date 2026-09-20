@@ -51,18 +51,62 @@ class ContentGenerator:
             log.warning('Vehicle listing fallback: %s', type(exc).__name__)
             return fallback[:1024]
 
+
+    @staticmethod
+    def _ru_vehicle_value(value):
+        value = (value or '').strip()
+        mapping = {
+            '自动': 'автоматическая', '自动挡': 'автоматическая', '手动': 'механическая', '手动挡': 'механическая',
+            '前驱': 'передний', '前轮驱动': 'передний', '后驱': 'задний', '后轮驱动': 'задний',
+            '四驱': 'полный', '全时四驱': 'постоянный полный', '适时四驱': 'подключаемый полный',
+            '白色': 'белый', '黑色': 'чёрный', '灰色': 'серый', '银色': 'серебристый',
+            '蓝色': 'синий', '红色': 'красный', '绿色': 'зелёный', '棕色': 'коричневый',
+            '原厂油漆': 'заводское ЛКП', '原版原漆': 'заводское ЛКП', '原漆': 'заводское ЛКП',
+            '新车': 'новый', '二手车': 'с пробегом', '二手': 'с пробегом',
+        }
+        return mapping.get(value, value)
+
+    @staticmethod
+    def _ru_highlights(value):
+        text = (value or '').strip()
+        replacements = {
+            '天窗': 'люк', '全景天窗': 'панорамная крыша', '电加热座椅': 'подогрев сидений',
+            '座椅加热': 'подогрев сидений', '电动尾门': 'электропривод багажника',
+            '电动座椅': 'электрорегулировка сидений', '倒车影像': 'камера заднего вида',
+            '360全景影像': 'камера 360°', '定速巡航': 'круиз-контроль', '自适应巡航': 'адаптивный круиз-контроль',
+            '无钥匙进入': 'бесключевой доступ', '一键启动': 'кнопка запуска двигателя',
+        }
+        for zh, ru in sorted(replacements.items(), key=lambda x: len(x[0]), reverse=True):
+            text = text.replace(zh, ru)
+        return text
+
+    @staticmethod
+    def _ru_title(brand, model, year):
+        brand_map = {'奥迪': 'Audi', '宝马': 'BMW', '奔驰': 'Mercedes-Benz', '大众': 'Volkswagen',
+                     '丰田': 'Toyota', '本田': 'Honda', '日产': 'Nissan', '马自达': 'Mazda',
+                     '现代': 'Hyundai', '起亚': 'Kia', '雷克萨斯': 'Lexus', '沃尔沃': 'Volvo',
+                     '吉利': 'Geely', '比亚迪': 'BYD', '奇瑞': 'Chery', '长城': 'Great Wall',
+                     '哈弗': 'Haval', '捷途': 'Jetour', '红旗': 'Hongqi'}
+        b = brand_map.get((brand or '').strip(), (brand or '').strip())
+        m = (model or '').strip()
+        # Remove duplicated brand prefix in either Chinese or Latin form.
+        for prefix in filter(None, [(brand or '').strip(), b]):
+            if m.lower().startswith(prefix.lower()):
+                m = m[len(prefix):].strip(' -')
+        return ' '.join(x for x in [b, m, (year or '').strip()] if x)
+
     async def structured_vehicle_listing(self, detail, facts):
         condition = getattr(detail, 'condition', 'used') if detail else 'used'
-        title_bits = [getattr(detail, 'brand', ''), getattr(detail, 'model', ''), getattr(detail, 'year', '')] if detail else []
-        title = ' '.join(x for x in title_bits if x).strip() or facts.split('|')[0].strip()
+        title = self._ru_title(getattr(detail, 'brand', ''), getattr(detail, 'model', ''), getattr(detail, 'year', '')) if detail else facts.split('|')[0].strip()
         fallback_lines = ['🚘 ' + title]
         if detail:
             pairs = [('Год', detail.year), ('Пробег', (detail.mileage_km + ' км') if detail.mileage_km else ''),
-                     ('Двигатель', detail.engine), ('КПП', detail.transmission), ('Привод', detail.drivetrain),
-                     ('Цвет', detail.color), ('Состояние', detail.paint_condition), ('Цена', detail.sale_price)]
+                     ('Двигатель', detail.engine), ('КПП', self._ru_vehicle_value(detail.transmission)),
+                     ('Привод', self._ru_vehicle_value(detail.drivetrain)), ('Цвет', self._ru_vehicle_value(detail.color)),
+                     ('Состояние', self._ru_vehicle_value(detail.paint_condition)), ('Цена', detail.sale_price)]
             fallback_lines += [f'• {k}: {v}' for k, v in pairs if v]
             if detail.highlights:
-                fallback_lines += ['', '⭐ ' + detail.highlights]
+                fallback_lines += ['', '⭐ ' + self._ru_highlights(detail.highlights)]
         fallback_lines += ['', '📩 Напишите нам для уточнения комплектации, цены и доставки.',
                            'FULIFENG AUTO — Ваш автосалон в Китае 🇨🇳']
         fallback = '\n'.join(fallback_lines)[:1024]
@@ -72,7 +116,7 @@ class ContentGenerator:
             response = await self.client.responses.create(
                 model=self.settings.openai_model,
                 instructions=(
-                    'Create a polished Russian Telegram car advertisement for FULIFENG AUTO. '
+                    'Create a polished Russian-only Telegram car advertisement for FULIFENG AUTO. Translate any Chinese values in the supplied data into natural Russian; never leave Chinese characters in the output. Avoid repeating the brand in the title. '
                     'The vehicle is ' + ('new' if condition == 'new' else 'used') + '. '
                     'Structure: short title, confirmed key parameters, 3-5 concise selling points only when supported '
                     'by supplied data, then CTA. Never invent specifications, equipment, condition, price, availability, '
