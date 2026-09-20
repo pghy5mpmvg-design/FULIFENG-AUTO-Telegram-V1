@@ -221,16 +221,42 @@ def create_app(settings=None):
         history_html = ''.join(f'<tr><td>{h.created_at:%Y-%m-%d %H:%M}</td><td>{escape(h.mode)}</td><td>{escape(h.status)}</td><td>{h.message_id or "-"}</td></tr>' for h in history)
         return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{x.code}</title>
         <style>body{{font-family:Arial;max-width:850px;margin:30px auto;padding:0 16px}}input,textarea,select,button{{width:100%;padding:10px;margin:6px 0;box-sizing:border-box}}</style></head><body>
-        <a href="/garage">← 返回车库</a><h1>{x.code}</h1><p>状态：{escape(x.status)}</p><h3>车辆图片</h3><div>{gallery or "暂无图片"}</div>
+        <a href="/garage">← 返回车库</a><h1>{x.code}</h1><p>状态：{escape(x.status)}</p><h3>车辆图片</h3><div>{gallery or "暂无图片"}</div><form method="post" action="/garage/{x.code}/photos" enctype="multipart/form-data"><label>单独上传车辆图片（最多10张，每张≤10MB）</label><input type="file" name="photos" multiple required accept="image/jpeg,image/png,image/webp"><button type="submit">上传图片</button></form>
         <form method="post" action="/garage/{x.code}/details"><h3>结构化车辆参数</h3><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px"><input name="brand" value="{dv('brand')}" placeholder="品牌"><input name="model" value="{dv('model')}" placeholder="车型"><input name="year" value="{dv('year')}" placeholder="年份"><select name="condition"><option value="used">二手车</option><option value="new">新车</option></select><input name="mileage_km" value="{dv('mileage_km')}" placeholder="里程 km"><input name="engine" value="{dv('engine')}" placeholder="发动机"><input name="transmission" value="{dv('transmission')}" placeholder="变速箱"><input name="drivetrain" value="{dv('drivetrain')}" placeholder="驱动方式"><input name="color" value="{dv('color')}" placeholder="颜色"><input name="paint_condition" value="{dv('paint_condition')}" placeholder="漆面/车况"><input name="purchase_price_cny" value="{dv('purchase_price_cny')}" placeholder="中国采购价 CNY"><input name="sale_price" value="{dv('sale_price')}" placeholder="对外报价"></div><textarea name="highlights" rows="3" placeholder="配置亮点">{dv('highlights')}</textarea><textarea name="notes" rows="3" placeholder="内部备注">{dv('notes')}</textarea><button type="submit">保存车辆参数</button></form><form method="post" action="/garage/{x.code}/edit" enctype="multipart/form-data">
         <label>车辆关键参数</label><textarea name="facts" rows="7">{value}</textarea>
         <label>俄语发布文案</label><textarea name="caption" rows="9">{caption}</textarea>
         <label>投放时间</label><input type="datetime-local" name="publish_at">
         <label>投放周期</label><select name="repeat_rule"><option value="once">仅一次</option><option value="daily">每天</option><option value="weekly">每周</option></select>
         <label><input type="checkbox" name="auto_publish" value="1" style="width:auto"> 开启自动投放</label>
-        <label>车辆图片（可多选，第一张作为封面）</label><input type="file" name="photos" multiple accept="image/jpeg,image/png,image/webp">
         <label>车辆状态</label><select name="status"><option value="available">在售</option><option value="reserved">已预订</option><option value="sold">已售</option></select>
         <button type="submit">保存修改</button></form><form method="post" action="/garage/{x.code}/duplicate"><button type="submit">复制车辆</button></form><form method="post" action="/garage/{x.code}/promotion"><input type="hidden" name="enabled" value="0"><button type="submit">停止推广</button></form><form method="post" action="/garage/{x.code}/promotion"><input type="hidden" name="enabled" value="1"><button type="submit">恢复推广</button></form><form method="post" action="/garage/{x.code}/publish-now"><button type="submit">立即发布到 Telegram</button></form><form method="post" action="/garage/{x.code}/generate-copy"><button type="submit">AI生成/重写俄语文案</button></form></body></html>"""
+
+    @app.post('/garage/{code}/photos')
+    async def garage_photo_upload(code: str, photos: list[UploadFile] = File(default=[]), _=Depends(garage_auth)):
+        x = app.state.db.vehicle(code)
+        if not x:
+            return HTMLResponse('车辆不存在', status_code=404)
+        stored = []
+        for photo in photos[:10]:
+            if not photo.filename:
+                continue
+            data = await photo.read()
+            if not data:
+                continue
+            if len(data) > 10 * 1024 * 1024:
+                return HTMLResponse('单张图片不能超过10MB', status_code=400)
+            suffix = Path(photo.filename).suffix.lower()
+            if suffix not in ('.jpg', '.jpeg', '.png', '.webp'):
+                return HTMLResponse('仅支持 JPG/PNG/WEBP', status_code=400)
+            filename = f'{code}-{uuid.uuid4().hex}{suffix}'
+            (media_dir / filename).write_bytes(data)
+            stored.append('local:' + filename)
+        if not stored:
+            return HTMLResponse('没有收到有效图片，请选择 JPG/PNG/WEBP 后重试', status_code=400)
+        existing = [p for p in (x.photo_file_ids or '').split('|') if p] or ([x.photo_file_id] if x.photo_file_id else [])
+        all_photos = (existing + stored)[:10]
+        app.state.db.set_vehicle_photos(code, all_photos)
+        return RedirectResponse('/garage/' + code, status_code=303)
 
     @app.post('/garage/{code}/edit')
     async def garage_vehicle_edit(code: str, facts: str = Form(...), caption: str = Form(''), publish_at: str = Form(''),
