@@ -1,4 +1,5 @@
 import logging
+import re
 from openai import AsyncOpenAI
 
 log = logging.getLogger(__name__)
@@ -53,32 +54,56 @@ class ContentGenerator:
 
 
     @staticmethod
-    def _ru_vehicle_value(value):
-        value = (value or '').strip()
+    def _normalize_ru_text(value):
+        text = (value or '').strip()
+        for a, b in {'，': ', ', '、': ', ', '；': '; ', '：': ': ', '。': '. ', '（': ' (', '）': ') '}.items():
+            text = text.replace(a, b)
+        return re.sub(r'\\s+', ' ', text).strip(' ,;')
+
+    @classmethod
+    def _ru_vehicle_value(cls, value):
+        text = cls._normalize_ru_text(value)
         mapping = {
-            '自动': 'автоматическая', '自动挡': 'автоматическая', '手动': 'механическая', '手动挡': 'механическая',
+            '自动': 'автоматическая', '自动挡': 'автоматическая', 'AT': 'автоматическая',
+            '手动': 'механическая', '手动挡': 'механическая', 'MT': 'механическая',
+            'CVT': 'вариатор', '无级变速': 'вариатор', '双离合': 'робот DCT',
+            '湿式双离合': 'мокрый робот DCT', '干式双离合': 'сухой робот DCT', '手自一体': 'автоматическая',
             '前驱': 'передний', '前轮驱动': 'передний', '后驱': 'задний', '后轮驱动': 'задний',
-            '四驱': 'полный', '全时四驱': 'постоянный полный', '适时四驱': 'подключаемый полный',
+            '四驱': 'полный', '全时四驱': 'постоянный полный', '适时四驱': 'подключаемый полный', '电四驱': 'полный электрический',
             '白色': 'белый', '黑色': 'чёрный', '灰色': 'серый', '银色': 'серебристый',
             '蓝色': 'синий', '红色': 'красный', '绿色': 'зелёный', '棕色': 'коричневый',
+            '金色': 'золотистый', '橙色': 'оранжевый', '紫色': 'фиолетовый', '米色': 'бежевый',
             '原厂油漆': 'заводское ЛКП', '原版原漆': 'заводское ЛКП', '原漆': 'заводское ЛКП',
-            '新车': 'новый', '二手车': 'с пробегом', '二手': 'с пробегом',
+            '局部补漆': 'локальный подкрас', '喷漆': 'окрашенные элементы', '钣金': 'кузовной ремонт',
+            '无事故': 'без ДТП', '新车': 'новый', '二手车': 'с пробегом', '二手': 'с пробегом',
+            '汽油': 'бензин', '柴油': 'дизель', '纯电': 'электромобиль', '插混': 'подключаемый гибрид',
+            '增程': 'гибрид с увеличенным запасом хода', '油电混合': 'гибрид',
         }
-        return mapping.get(value, value)
+        if text in mapping:
+            return mapping[text]
+        for zh, ru in sorted(mapping.items(), key=lambda x: len(x[0]), reverse=True):
+            text = text.replace(zh, ru)
+        return cls._normalize_ru_text(text)
 
-    @staticmethod
-    def _ru_highlights(value):
-        text = (value or '').strip()
+    @classmethod
+    def _ru_highlights(cls, value):
+        text = cls._normalize_ru_text(value)
         replacements = {
-            '天窗': 'люк', '全景天窗': 'панорамная крыша', '电加热座椅': 'подогрев сидений',
-            '座椅加热': 'подогрев сидений', '电动尾门': 'электропривод багажника',
-            '电动座椅': 'электрорегулировка сидений', '倒车影像': 'камера заднего вида',
-            '360全景影像': 'камера 360°', '定速巡航': 'круиз-контроль', '自适应巡航': 'адаптивный круиз-контроль',
+            '全景天窗': 'панорамная крыша', '天窗': 'люк', '电加热座椅': 'подогрев сидений',
+            '座椅加热': 'подогрев сидений', '座椅通风': 'вентиляция сидений', '座椅按摩': 'массаж сидений',
+            '电动尾门': 'электропривод багажника', '感应尾门': 'бесконтактное открытие багажника',
+            '电动座椅': 'электрорегулировка сидений', '座椅记忆': 'память сидений',
+            '360全景影像': 'камера 360°', '倒车影像': 'камера заднего вида',
+            '自适应巡航': 'адаптивный круиз-контроль', '定速巡航': 'круиз-контроль',
+            '车道保持': 'удержание в полосе', '盲区监测': 'контроль слепых зон', '自动泊车': 'автопарковка',
             '无钥匙进入': 'бесключевой доступ', '一键启动': 'кнопка запуска двигателя',
+            '无线充电': 'беспроводная зарядка', '氛围灯': 'контурная подсветка салона',
+            '空气悬架': 'пневмоподвеска', '矩阵大灯': 'матричные фары', 'LED大灯': 'LED-фары',
+            '激光大灯': 'лазерные фары', '抬头显示': 'проекционный дисплей HUD',
         }
         for zh, ru in sorted(replacements.items(), key=lambda x: len(x[0]), reverse=True):
             text = text.replace(zh, ru)
-        return text
+        return cls._normalize_ru_text(text)
 
     @staticmethod
     def _ru_title(brand, model, year):
@@ -86,13 +111,17 @@ class ContentGenerator:
                      '丰田': 'Toyota', '本田': 'Honda', '日产': 'Nissan', '马自达': 'Mazda',
                      '现代': 'Hyundai', '起亚': 'Kia', '雷克萨斯': 'Lexus', '沃尔沃': 'Volvo',
                      '吉利': 'Geely', '比亚迪': 'BYD', '奇瑞': 'Chery', '长城': 'Great Wall',
-                     '哈弗': 'Haval', '捷途': 'Jetour', '红旗': 'Hongqi'}
-        b = brand_map.get((brand or '').strip(), (brand or '').strip())
+                     '哈弗': 'Haval', '捷途': 'Jetour', '红旗': 'Hongqi', '捷达': 'Jetta',
+                     '福特': 'Ford', '雪佛兰': 'Chevrolet', '凯迪拉克': 'Cadillac', '保时捷': 'Porsche',
+                     '路虎': 'Land Rover', '领克': 'Lynk & Co', '坦克': 'TANK'}
+        raw_b = (brand or '').strip()
+        b = brand_map.get(raw_b, raw_b)
         m = (model or '').strip()
-        # Remove duplicated brand prefix in either Chinese or Latin form.
-        for prefix in filter(None, [(brand or '').strip(), b]):
+        aliases = [raw_b, b] + [zh for zh, latin in brand_map.items() if latin.lower() == b.lower()]
+        for prefix in filter(None, aliases):
             if m.lower().startswith(prefix.lower()):
                 m = m[len(prefix):].strip(' -')
+                break
         return ' '.join(x for x in [b, m, (year or '').strip()] if x)
 
     async def structured_vehicle_listing(self, detail, facts):
@@ -103,7 +132,7 @@ class ContentGenerator:
             pairs = [('Год', detail.year), ('Пробег', (detail.mileage_km + ' км') if detail.mileage_km else ''),
                      ('Двигатель', detail.engine), ('КПП', self._ru_vehicle_value(detail.transmission)),
                      ('Привод', self._ru_vehicle_value(detail.drivetrain)), ('Цвет', self._ru_vehicle_value(detail.color)),
-                     ('Состояние', self._ru_vehicle_value(detail.paint_condition)), ('Цена', detail.sale_price)]
+                     ('ЛКП', self._ru_vehicle_value(detail.paint_condition)), ('Цена', detail.sale_price)]
             fallback_lines += [f'• {k}: {v}' for k, v in pairs if v]
             if detail.highlights:
                 fallback_lines += ['', '⭐ ' + self._ru_highlights(detail.highlights)]
