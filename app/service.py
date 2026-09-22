@@ -112,11 +112,28 @@ class BotService:
                 def media_value(p):
                     return Path('/app/data/garage_media') / p.removeprefix('local:') if p.startswith('local:') else p
                 if len(photos) > 1:
-                    media = [InputMediaPhoto(media=media_value(p), caption=caption[:1024] if i == 0 else None) for i, p in enumerate(photos[:10])]
-                    sent_group = await self.application.bot.send_media_group(chat_id=target, media=media)
-                    sent = sent_group[0]
+                    handles = []
+                    try:
+                        media = []
+                        for i, p in enumerate(photos[:10]):
+                            v = media_value(p)
+                            if isinstance(v, Path):
+                                fh = v.open('rb')
+                                handles.append(fh)
+                                v = fh
+                            media.append(InputMediaPhoto(media=v, caption=caption[:1024] if i == 0 else None))
+                        sent_group = await self.application.bot.send_media_group(chat_id=target, media=media)
+                        sent = sent_group[0]
+                    finally:
+                        for fh in handles:
+                            fh.close()
                 elif photos:
-                    sent = await self.application.bot.send_photo(chat_id=target, photo=media_value(photos[0]), caption=caption[:1024])
+                    v = media_value(photos[0])
+                    if isinstance(v, Path):
+                        with v.open('rb') as fh:
+                            sent = await self.application.bot.send_photo(chat_id=target, photo=fh, caption=caption[:1024])
+                    else:
+                        sent = await self.application.bot.send_photo(chat_id=target, photo=v, caption=caption[:1024])
                 else:
                     sent = await self.application.bot.send_message(chat_id=target, text=caption[:4096])
                 self.db.mark_vehicle_published(vehicle.code, sent.message_id)
