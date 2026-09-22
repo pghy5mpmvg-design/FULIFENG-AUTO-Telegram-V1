@@ -201,7 +201,7 @@ class Database:
         with self.session() as s:
             return s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
 
-    def update_vehicle(self, code, facts=None, caption=None, photo_file_id=None, photo_file_ids=None, publish_at=None, repeat_rule=None, auto_publish=None):
+    def update_vehicle(self, code, facts=None, caption=None, photo_file_id=None, photo_file_ids=None, publish_at=None, repeat_rule=None, auto_publish=None, clear_publish_at=False):
         with self.session.begin() as s:
             row = s.scalar(select(Vehicle).where(Vehicle.code == code.upper()))
             if not row:
@@ -210,7 +210,12 @@ class Database:
             if caption is not None: row.caption = caption[:4000]
             if photo_file_id is not None: row.photo_file_id = photo_file_id
             if photo_file_ids is not None: row.photo_file_ids = photo_file_ids
-            if publish_at is not None: row.publish_at = publish_at
+            if clear_publish_at:
+                row.publish_at = None
+            elif publish_at is not None:
+                # SQLite does not preserve timezone offsets reliably. Store UTC as
+                # a naive value so comparisons with now() use the same convention.
+                row.publish_at = publish_at.astimezone(timezone.utc).replace(tzinfo=None) if publish_at.tzinfo else publish_at
             if repeat_rule is not None: row.repeat_rule = repeat_rule
             if auto_publish is not None: row.auto_publish = auto_publish
             row.updated_at = now()
