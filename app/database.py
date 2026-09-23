@@ -227,6 +227,11 @@ class Database:
             if not row:
                 return False
             row.status, row.updated_at = status, now()
+            # Reserved/sold vehicles must immediately leave the automatic
+            # publishing queue. A vehicle can be rescheduled if returned to sale.
+            if status in ('reserved', 'sold'):
+                row.auto_publish = False
+                row.publish_at = None
             return True
 
     def mark_vehicle_published(self, code, message_id):
