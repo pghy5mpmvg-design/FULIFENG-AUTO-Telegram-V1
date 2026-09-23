@@ -317,12 +317,25 @@ def create_app(settings=None):
                 candidates.append(x)
             if len(candidates) >= max(1, min(limit, 100)):
                 break
+        # Rotate brands/models so a Telegram feed does not become a block of
+        # near-identical cars. Keep each bucket in inventory order and cycle.
+        buckets = {}
+        for x in reversed(candidates):
+            d = app.state.db.vehicle_detail(x.code)
+            key = ((getattr(d, 'brand', '') or '') + '|' + (getattr(d, 'model', '') or '')).strip('|').lower() or x.code
+            buckets.setdefault(key, []).append(x)
+        rotated = []
+        while any(buckets.values()):
+            for key in list(buckets):
+                if buckets[key]:
+                    rotated.append(buckets[key].pop(0))
+        candidates = rotated
         tz = ZoneInfo(settings.timezone)
         cursor_day = datetime.now(tz).date()
         now_local = datetime.now(tz)
         planned, failed = [], []
         slot_index = 0
-        for x in reversed(candidates):
+        for x in candidates:
             while True:
                 day_offset = slot_index // len(slots)
                 hh, mm = slots[slot_index % len(slots)]
