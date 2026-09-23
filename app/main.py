@@ -183,7 +183,7 @@ def create_app(settings=None):
         body = ''.join(f"""<div class="card"><div class="cover">{('<img src="/garage-media/'+escape((x.photo_file_ids.split('|')[0] if x.photo_file_ids else x.photo_file_id).removeprefix('local:'))+'">') if (x.photo_file_ids or x.photo_file_id).startswith('local:') else '🚘'}</div><div><h3><a href="/garage/{x.code}">{escape(x.code or '')}</a></h3><p>{escape(x.facts[:180])}</p><b>{escape(x.status)}</b><p>下次：{x.publish_at.astimezone(ZoneInfo(settings.timezone)).strftime('%Y-%m-%d %H:%M') if x.publish_at else '-'}</p></div></div>""" for x in rows)
         return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
         <title>FULIFENG AUTO Garage</title><style>body{font-family:Arial;max-width:1100px;margin:30px auto;padding:0 16px}input,textarea,button{width:100%;padding:10px;margin:5px 0;box-sizing:border-box}table{width:100%;border-collapse:collapse;margin-top:25px}.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-top:25px}.card{border:1px solid #ddd;border-radius:12px;padding:12px}.cover{height:170px;background:#f3f3f3;display:flex;align-items:center;justify-content:center;font-size:50px;border-radius:8px}.cover img{width:100%;height:100%;object-fit:cover;border-radius:8px}td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:700px){.grid{grid-template-columns:1fr}}</style></head>
-        <body><h1>FULIFENG AUTO 车辆车库</h1><p><a href='/garage-dashboard'>← 运营控制台</a>　<a href='/garage/batch'>📥 批量导入库存</a></p><p>车辆资料录入 · 关键参数 · 投放时间</p><form method='get' action='/garage'><div class='grid'><input name='q' placeholder='搜索车型 / 编号'><select name='status'><option value=''>全部状态</option><option value='available'>在售</option><option value='reserved'>已预订</option><option value='sold'>已售</option></select></div><button type='submit'>搜索 / 筛选</button></form>
+        <body><h1>FULIFENG AUTO 车辆车库</h1><p><a href='/garage-dashboard'>← 运营控制台</a>　<a href='/garage/batch'>📥 批量导入库存</a>　<a href='/garage/batch-photos'>🖼 批量匹配照片</a></p><p>车辆资料录入 · 关键参数 · 投放时间</p><form method='get' action='/garage'><div class='grid'><input name='q' placeholder='搜索车型 / 编号'><select name='status'><option value=''>全部状态</option><option value='available'>在售</option><option value='reserved'>已预订</option><option value='sold'>已售</option></select></div><button type='submit'>搜索 / 筛选</button></form>
         <form method="post" action="/garage/add"><div class="grid">
         <input name="model" required placeholder="品牌 / 车型，例如 Audi Q3"><input name="year" placeholder="年份，例如 2022">
         <input name="mileage" placeholder="里程，例如 40000 km"><input name="condition" placeholder="车况，例如 原始油漆">
@@ -287,6 +287,54 @@ def create_app(settings=None):
         <label><input type="checkbox" name="auto_publish" value="1" style="width:auto" {'checked' if x.auto_publish else ''}> 开启自动投放</label>
         <label>车辆状态</label><select name="status"><option value="available" {'selected' if x.status == 'available' else ''}>在售</option><option value="reserved" {'selected' if x.status == 'reserved' else ''}>已预订</option><option value="sold" {'selected' if x.status == 'sold' else ''}>已售</option></select>
         <button type="submit">保存修改</button></form><form method="post" action="/garage/{x.code}/duplicate"><button type="submit">复制车辆</button></form><form method="post" action="/garage/{x.code}/promotion"><input type="hidden" name="enabled" value="0"><button type="submit">停止推广</button></form><form method="post" action="/garage/{x.code}/promotion"><input type="hidden" name="enabled" value="1"><button type="submit">恢复推广</button></form><form method="post" action="/garage/{x.code}/publish-now"><button type="submit">立即发布到 Telegram</button></form><form method="post" action="/garage/{x.code}/generate-copy"><button type="submit">AI生成/重写俄语文案</button></form></body></html>"""
+
+    @app.get('/garage/batch-photos', response_class=HTMLResponse)
+    def garage_batch_photos(_=Depends(garage_auth)):
+        return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>批量匹配车辆照片</title>
+        <style>body{font-family:Arial;max-width:900px;margin:30px auto;padding:0 16px}input,button{width:100%;padding:12px;margin:8px 0;box-sizing:border-box}.tip{background:#f5f5f5;padding:14px;border-radius:10px}</style></head><body>
+        <a href="/garage">← 返回车库</a><h1>批量匹配车辆照片</h1><div class="tip"><b>图片命名规则</b><br>FF-00003-01.jpg<br>FF-00003-02.jpg<br>FF-00004-01.jpg<br><br>系统读取文件名前面的 FF-xxxxx，自动归入对应车辆。每辆最多保存10张，第一张作为封面。支持 JPG/JPEG/PNG/WEBP，每张≤10MB。</div>
+        <form method="post" action="/garage/batch-photos" enctype="multipart/form-data"><input type="file" name="photos" multiple required accept="image/jpeg,image/png,image/webp"><button type="submit">上传并自动匹配</button></form></body></html>"""
+
+    @app.post('/garage/batch-photos', response_class=HTMLResponse)
+    async def garage_batch_photos_upload(photos: list[UploadFile] = File(default=[]), _=Depends(garage_auth)):
+        import re
+        grouped, errors = {}, []
+        for photo in photos:
+            if not photo.filename:
+                continue
+            match = re.search(r'(?i)(FF-\d{5})', Path(photo.filename).name)
+            if not match:
+                errors.append(f'{photo.filename}：文件名没有 FF-xxxxx')
+                continue
+            code = match.group(1).upper()
+            x = app.state.db.vehicle(code)
+            if not x:
+                errors.append(f'{photo.filename}：找不到车辆 {code}')
+                continue
+            data = await photo.read()
+            if not data:
+                errors.append(f'{photo.filename}：空文件')
+                continue
+            if len(data) > 10 * 1024 * 1024:
+                errors.append(f'{photo.filename}：超过10MB')
+                continue
+            suffix = Path(photo.filename).suffix.lower()
+            if suffix not in ('.jpg','.jpeg','.png','.webp'):
+                errors.append(f'{photo.filename}：格式不支持')
+                continue
+            filename = f'{code}-{uuid.uuid4().hex}{suffix}'
+            (media_dir / filename).write_bytes(data)
+            grouped.setdefault(code, []).append('local:' + filename)
+        updated = []
+        for code, stored in grouped.items():
+            x = app.state.db.vehicle(code)
+            existing = [p for p in (x.photo_file_ids or '').split('|') if p] or ([x.photo_file_id] if x.photo_file_id else [])
+            merged = (existing + stored)[:10]
+            app.state.db.set_vehicle_photos(code, merged)
+            updated.append((code, len(stored), len(merged)))
+        rows = ''.join(f'<li><a href="/garage/{escape(code)}">{escape(code)}</a>：本次匹配 {added} 张，当前共 {total} 张</li>' for code,added,total in updated)
+        errs = ''.join(f'<li>{escape(e)}</li>' for e in errors)
+        return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>照片匹配结果</title></head><body style="font-family:Arial;max-width:900px;margin:30px auto;padding:0 16px"><h1>批量照片处理完成</h1><p>成功匹配车辆：<b>{len(updated)}</b> 辆；需要检查：<b>{len(errors)}</b> 个文件。</p><ul>{rows}</ul>{('<h3>未匹配/错误</h3><ul>'+errs+'</ul>') if errors else ''}<p><a href="/garage/batch-photos">继续上传照片</a>　<a href="/garage">返回车库</a></p></body></html>"""
 
     @app.post('/garage/{code}/photos')
     async def garage_photo_upload(code: str, photos: list[UploadFile] = File(default=[]), _=Depends(garage_auth)):
