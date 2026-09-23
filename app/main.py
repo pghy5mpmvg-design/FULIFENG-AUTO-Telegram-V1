@@ -183,7 +183,7 @@ def create_app(settings=None):
         body = ''.join(f"""<div class="card"><div class="cover">{('<img src="/garage-media/'+escape((x.photo_file_ids.split('|')[0] if x.photo_file_ids else x.photo_file_id).removeprefix('local:'))+'">') if (x.photo_file_ids or x.photo_file_id).startswith('local:') else '🚘'}</div><div><h3><a href="/garage/{x.code}">{escape(x.code or '')}</a></h3><p>{escape(x.facts[:180])}</p><b>{escape(x.status)}</b><p>下次：{x.publish_at.astimezone(ZoneInfo(settings.timezone)).strftime('%Y-%m-%d %H:%M') if x.publish_at else '-'}</p></div></div>""" for x in rows)
         return """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
         <title>FULIFENG AUTO Garage</title><style>body{font-family:Arial;max-width:1100px;margin:30px auto;padding:0 16px}input,textarea,button{width:100%;padding:10px;margin:5px 0;box-sizing:border-box}table{width:100%;border-collapse:collapse;margin-top:25px}.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;margin-top:25px}.card{border:1px solid #ddd;border-radius:12px;padding:12px}.cover{height:170px;background:#f3f3f3;display:flex;align-items:center;justify-content:center;font-size:50px;border-radius:8px}.cover img{width:100%;height:100%;object-fit:cover;border-radius:8px}td,th{padding:10px;border-bottom:1px solid #ddd;text-align:left}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}@media(max-width:700px){.grid{grid-template-columns:1fr}}</style></head>
-        <body><h1>FULIFENG AUTO 车辆车库</h1><p><a href='/garage-dashboard'>← 运营控制台</a></p><p>车辆资料录入 · 关键参数 · 投放时间</p><form method='get' action='/garage'><div class='grid'><input name='q' placeholder='搜索车型 / 编号'><select name='status'><option value=''>全部状态</option><option value='available'>在售</option><option value='reserved'>已预订</option><option value='sold'>已售</option></select></div><button type='submit'>搜索 / 筛选</button></form>
+        <body><h1>FULIFENG AUTO 车辆车库</h1><p><a href='/garage-dashboard'>← 运营控制台</a>　<a href='/garage/batch'>📥 批量导入库存</a></p><p>车辆资料录入 · 关键参数 · 投放时间</p><form method='get' action='/garage'><div class='grid'><input name='q' placeholder='搜索车型 / 编号'><select name='status'><option value=''>全部状态</option><option value='available'>在售</option><option value='reserved'>已预订</option><option value='sold'>已售</option></select></div><button type='submit'>搜索 / 筛选</button></form>
         <form method="post" action="/garage/add"><div class="grid">
         <input name="model" required placeholder="品牌 / 车型，例如 Audi Q3"><input name="year" placeholder="年份，例如 2022">
         <input name="mileage" placeholder="里程，例如 40000 km"><input name="condition" placeholder="车况，例如 原始油漆">
@@ -193,6 +193,62 @@ def create_app(settings=None):
         </div><textarea name="details" rows="4" placeholder="发动机、驱动、颜色、配置亮点、备注等关键参数"></textarea>
         <button type="submit">保存到车库</button></form>
         <div class="cards">""" + body + "</div></body></html>"
+
+    @app.get('/garage/batch', response_class=HTMLResponse)
+    def garage_batch(_=Depends(garage_auth)):
+        sample = '品牌,车型,年份,新车/二手,里程km,发动机,变速箱,驱动,颜色,漆面车况,对外报价,配置亮点,采购价CNY,内部备注'
+        return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>批量导入库存</title>
+        <style>body{{font-family:Arial;max-width:900px;margin:30px auto;padding:0 16px}}textarea,button{{width:100%;padding:12px;margin:8px 0;box-sizing:border-box}}code{{display:block;white-space:pre-wrap;background:#f5f5f5;padding:12px}}</style></head><body>
+        <a href="/garage">← 返回车库</a><h1>批量导入库存</h1><p>第一版支持 CSV 文本批量导入。一行一辆车；可直接从 Excel 复制为 CSV。导入后系统自动生成 FF 编号，采购价和内部备注只保存在后台。</p>
+        <code>{sample}</code>
+        <form method="post" action="/garage/batch"><textarea name="csv_text" rows="18" required placeholder="粘贴 CSV 内容，第一行可使用上面的表头"></textarea><button type="submit">批量创建库存</button></form></body></html>"""
+
+    @app.post('/garage/batch', response_class=HTMLResponse)
+    def garage_batch_import(csv_text: str = Form(...), _=Depends(garage_auth)):
+        import csv, io
+        aliases = {
+            '品牌':'brand','brand':'brand','车型':'model','model':'model','年份':'year','year':'year',
+            '新车/二手':'condition','车况类型':'condition','condition':'condition','里程km':'mileage_km','里程':'mileage_km','mileage':'mileage_km',
+            '发动机':'engine','engine':'engine','变速箱':'transmission','transmission':'transmission','驱动':'drivetrain','drivetrain':'drivetrain',
+            '颜色':'color','color':'color','漆面车况':'paint_condition','漆面':'paint_condition','paint_condition':'paint_condition',
+            '对外报价':'sale_price','售价':'sale_price','sale_price':'sale_price','配置亮点':'highlights','亮点':'highlights','highlights':'highlights',
+            '采购价CNY':'purchase_price_cny','采购价':'purchase_price_cny','purchase_price_cny':'purchase_price_cny',
+            '内部备注':'notes','备注':'notes','notes':'notes'
+        }
+        raw = (csv_text or '').lstrip('\ufeff').strip()
+        if not raw:
+            return HTMLResponse('没有可导入的数据', status_code=400)
+        reader = csv.reader(io.StringIO(raw))
+        rows = list(reader)
+        if not rows:
+            return HTMLResponse('没有可导入的数据', status_code=400)
+        first = [x.strip() for x in rows[0]]
+        has_header = any(x in aliases for x in first)
+        default_keys = ['brand','model','year','condition','mileage_km','engine','transmission','drivetrain','color','paint_condition','sale_price','highlights','purchase_price_cny','notes']
+        keys = [aliases.get(x, '') for x in first] if has_header else default_keys
+        data_rows = rows[1:] if has_header else rows
+        created, errors = [], []
+        for idx, row in enumerate(data_rows, start=2 if has_header else 1):
+            if not any((x or '').strip() for x in row):
+                continue
+            vals = {k: (row[i].strip() if i < len(row) else '') for i,k in enumerate(keys) if k}
+            brand, model = vals.get('brand',''), vals.get('model','')
+            if not (brand or model):
+                errors.append(f'第 {idx} 行：缺少品牌/车型')
+                continue
+            cond_raw = vals.get('condition','').lower()
+            condition = 'new' if cond_raw in ('new','新车','новый') else 'used'
+            vals['condition'] = condition
+            public_parts = [brand, model, vals.get('year',''), vals.get('mileage_km',''), vals.get('engine',''),
+                            vals.get('transmission',''), vals.get('drivetrain',''), vals.get('color',''),
+                            vals.get('paint_condition',''), vals.get('sale_price',''), vals.get('highlights','')]
+            facts = ' | '.join(x for x in public_parts if x)
+            code = app.state.db.create_vehicle(facts, '', '', None, 'once', False)
+            app.state.db.save_vehicle_detail(code, **vals)
+            created.append(code)
+        links = ''.join(f'<li><a href="/garage/{escape(code)}">{escape(code)}</a></li>' for code in created)
+        errs = ''.join(f'<li>{escape(e)}</li>' for e in errors)
+        return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>导入结果</title></head><body style="font-family:Arial;max-width:800px;margin:30px auto;padding:0 16px"><h1>批量导入完成</h1><p>成功创建：<b>{len(created)}</b> 辆；跳过/错误：<b>{len(errors)}</b> 行。</p><p>新车辆默认：在售、自动投放关闭、仅一次。请上传对应照片后再启用投放。</p><ul>{links}</ul>{('<h3>需要检查</h3><ul>'+errs+'</ul>') if errors else ''}<p><a href="/garage">返回车辆车库</a></p></body></html>"""
 
     @app.post('/garage/add')
     def garage_add(model: str = Form(...), year: str = Form(''), mileage: str = Form(''), condition: str = Form(''),
