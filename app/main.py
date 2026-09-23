@@ -158,22 +158,41 @@ def create_app(settings=None):
     @app.get('/garage-dashboard', response_class=HTMLResponse)
     def garage_dashboard(_=Depends(garage_auth)):
         s = app.state.db.garage_stats()
+        allv = app.state.db.vehicles(500)
         intervention = app.state.db.intervention_leads()
-        intervention_html = ''.join(f'<tr><td><b>{x.grade}</b></td><td><a href="/crm/{x.id}">{escape(x.first_name or x.username or str(x.telegram_user_id))}</a></td><td>{escape(x.vehicle_code or "-")}</td><td>{escape(x.budget or "-")}</td><td>{escape(x.city or "-")}</td><td>{escape(x.last_message[:120])}</td></tr>' for x in intervention)
+        intervention_html = ''.join(f'<tr><td><b>{x.grade}</b></td><td><a href="/crm/{x.id}">{escape(x.first_name or x.username or str(x.user_id))}</a></td><td>{escape(x.vehicle_code or "-")}</td><td>{escape(x.budget or "-")}</td><td>{escape(x.city or "-")}</td><td>{escape((x.last_message or x.latest_message or "")[:120])}</td></tr>' for x in intervention)
         upcoming = app.state.db.upcoming_vehicles()
         failures = app.state.db.failed_vehicle_publications()
+        now_local = datetime.now(ZoneInfo(settings.timezone))
+        def local_dt(dt):
+            if not dt: return None
+            if dt.tzinfo is None: dt = dt.replace(tzinfo=ZoneInfo('UTC'))
+            return dt.astimezone(ZoneInfo(settings.timezone))
+        today_planned = [v for v in upcoming if local_dt(v.publish_at).date() == now_local.date()]
+        ready_unscheduled, no_photo, no_caption = [], [], []
+        for v in allv:
+            if v.status != 'available': continue
+            photos = [p for p in (v.photo_file_ids or '').split('|') if p] or ([v.photo_file_id] if v.photo_file_id else [])
+            if not photos: no_photo.append(v)
+            elif not v.publish_at: ready_unscheduled.append(v)
+            if not (v.caption or '').strip(): no_caption.append(v)
         recent = ''.join(f'<tr><td>{escape(p.vehicle_code)}</td><td>{p.created_at:%Y-%m-%d %H:%M}</td><td>{escape(p.mode)}</td><td>{escape(p.status)}</td><td>{p.message_id or "-"}</td></tr>' for p in s['recent'])
-        upcoming_html = ''.join(f'<tr><td><a href="/garage/{v.code}">{v.code}</a></td><td>{escape(v.facts[:100])}</td><td>{v.publish_at.astimezone(ZoneInfo(settings.timezone)).strftime("%Y-%m-%d %H:%M") if v.publish_at else "-"}</td><td>{escape(v.repeat_rule)}</td></tr>' for v in upcoming)
-        failed_html = ''.join(f'<tr><td>{escape(p.vehicle_code)}</td><td>{p.created_at:%Y-%m-%d %H:%M}</td><td>{escape(p.status)}</td></tr>' for p in failures)
+        upcoming_html = ''.join(f'<tr><td><a href="/garage/{v.code}">{v.code}</a></td><td>{escape(v.facts[:100])}</td><td>{local_dt(v.publish_at).strftime("%Y-%m-%d %H:%M") if v.publish_at else "-"}</td><td>{escape(v.repeat_rule)}</td></tr>' for v in upcoming)
+        failed_html = ''.join(f'<tr><td><a href="/garage/{escape(p.vehicle_code)}">{escape(p.vehicle_code)}</a></td><td>{p.created_at:%Y-%m-%d %H:%M}</td><td>{escape(p.status)}</td></tr>' for p in failures)
+        issue_rows = ''.join(f'<tr><td><a href="/garage/{v.code}">{v.code}</a></td><td>{reason}</td><td>{escape(v.facts[:100])}</td></tr>' for reason,vs in [('缺少照片',no_photo),('有照片但未排期',ready_unscheduled),('缺少俄语文案',no_caption)] for v in vs[:15])
         bot_ok = bool(app.state.service.polling_ok)
+        scheduler_ok = bool(app.state.service.scheduler.running)
+        global_enabled = app.state.db.get('paused') == 'false'
         return f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>FULIFENG AUTO 运营控制台</title>
-        <style>body{{font-family:Arial;max-width:1100px;margin:30px auto;padding:0 16px}}.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px}}.box{{padding:18px;border:1px solid #ddd;border-radius:12px}}.n{{font-size:30px;font-weight:bold}}table{{width:100%;border-collapse:collapse;margin-top:20px}}td,th{{padding:9px;border-bottom:1px solid #ddd;text-align:left}}a{{text-decoration:none}}</style></head><body>
-        <h1>FULIFENG AUTO 运营控制台</h1><p><a href="/garage">→ 进入车辆车库</a>　<a href="/crm">→ 客户线索 CRM</a></p><div class="stats">
-        <div class="box">总库存<div class="n">{s['total']}</div></div><div class="box">在售<div class="n">{s['available']}</div></div>
-        <div class="box">已预订<div class="n">{s['reserved']}</div></div><div class="box">已售<div class="n">{s['sold']}</div></div>
-        <div class="box">自动推广<div class="n">{s['auto']}</div></div><div class="box">等待投放<div class="n">{s['due']}</div></div>
-        <div class="box">今日已发布<div class="n">{s['sent_today']}</div></div></div>
-        <h2>🔥 需要人工立即介入</h2><table><tr><th>等级</th><th>客户</th><th>车辆</th><th>预算</th><th>城市</th><th>最近消息</th></tr>{intervention_html or "<tr><td colspan=6>暂无 A+/A 高意向客户</td></tr>"}</table><h2>系统状态</h2><p>Telegram Bot：<b>{"运行中" if bot_ok else "未运行/启动中"}</b>　调度器：<b>{"运行中" if app.state.service.scheduler.running else "未运行"}</b>　时区：{escape(settings.timezone)}</p><h2>下一批投放计划</h2><table><tr><th>车辆</th><th>信息</th><th>时间</th><th>周期</th></tr>{upcoming_html}</table><h2>失败任务</h2><table><tr><th>车辆</th><th>时间</th><th>错误</th></tr>{failed_html or "<tr><td colspan=3>暂无失败任务</td></tr>"}</table><h2>最近发布记录</h2><table><tr><th>车辆</th><th>时间</th><th>方式</th><th>状态</th><th>Telegram ID</th></tr>{recent}</table></body></html>"""
+        <style>body{{font-family:Arial;max-width:1180px;margin:30px auto;padding:0 16px}}.stats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:12px}}.box{{padding:18px;border:1px solid #ddd;border-radius:12px}}.n{{font-size:30px;font-weight:bold}}.ok{{background:#eef9ee}}.warn{{background:#fff8e6}}table{{width:100%;border-collapse:collapse;margin-top:16px}}td,th{{padding:9px;border-bottom:1px solid #ddd;text-align:left}}a{{text-decoration:none}}.actions a{{display:inline-block;padding:10px 14px;border:1px solid #ccc;border-radius:8px;margin:4px}}</style></head><body>
+        <h1>FULIFENG AUTO 运营控制台</h1><p class="actions"><a href="/garage">🚘 车辆车库</a><a href="/garage/batch">📥 批量库存</a><a href="/garage/batch-photos">🖼 批量照片</a><a href="/garage/auto-schedule">⏱ 自动排期</a><a href="/crm">👥 客户 CRM</a></p>
+        <div class="stats"><div class="box">总库存<div class="n">{s['total']}</div></div><div class="box">在售<div class="n">{s['available']}</div></div><div class="box">今日计划<div class="n">{len(today_planned)}</div></div><div class="box">今日已发布<div class="n">{s['sent_today']}</div></div><div class="box">等待自动投放<div class="n">{s['auto']}</div></div><div class="box warn">未排期<div class="n">{len(ready_unscheduled)}</div></div><div class="box warn">缺照片<div class="n">{len(no_photo)}</div></div><div class="box warn">缺文案<div class="n">{len(no_caption)}</div></div></div>
+        <h2>系统状态</h2><p>Telegram Bot：<b>{'运行中' if bot_ok else '未运行/启动中'}</b>　调度器：<b>{'运行中' if scheduler_ok else '未运行'}</b>　自动投放总开关：<b>{'已开启' if global_enabled else '已暂停'}</b>　时区：{escape(settings.timezone)}　当前：{now_local:%Y-%m-%d %H:%M}</p>
+        <h2>⚠️ 库存异常 / 待处理</h2><table><tr><th>车辆</th><th>问题</th><th>信息</th></tr>{issue_rows or '<tr><td colspan=3>当前没有库存异常</td></tr>'}</table>
+        <h2>🔥 A+/A 客户需要人工介入</h2><table><tr><th>等级</th><th>客户</th><th>车辆</th><th>预算</th><th>城市</th><th>最近消息</th></tr>{intervention_html or '<tr><td colspan=6>暂无 A+/A 高意向客户</td></tr>'}</table>
+        <h2>下一批投放计划</h2><table><tr><th>车辆</th><th>信息</th><th>莫斯科时间</th><th>周期</th></tr>{upcoming_html or '<tr><td colspan=4>暂无排期</td></tr>'}</table>
+        <h2>失败任务</h2><table><tr><th>车辆</th><th>时间</th><th>错误</th></tr>{failed_html or '<tr><td colspan=3>暂无失败任务</td></tr>'}</table>
+        <h2>最近发布记录</h2><table><tr><th>车辆</th><th>时间</th><th>方式</th><th>状态</th><th>Telegram ID</th></tr>{recent}</table></body></html>"""
 
     @app.get('/garage', response_class=HTMLResponse)
     def garage(q: str = '', status: str = '', _=Depends(garage_auth)):
